@@ -623,7 +623,7 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
             for code in common_stocks:
                 info = stock_info_map.get(code, {})
                 common_stocks_details.append({
-                    '股票代码': code,  # 移除链接，只显示纯文本
+                    '股票代码': code,
                     '股票简称': info.get('name', '未知'),
                     '所属概念': info.get('concept', '未知'),
                     '斜率(%)': info.get('slope', np.nan)
@@ -656,7 +656,8 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
             # 自动显示所有共同股票，不再使用下拉框
             for i, selected_stock in enumerate(common_stocks):
                 st.markdown(f"---")
-                st.markdown(f"### {i+1}. {selected_stock} - {stock_info_map.get(selected_stock, {}).get('name', '未知')}")
+                stock_name = stock_info_map.get(selected_stock, {}).get('name', '未知')
+                st.markdown(f"### {i+1}. {selected_stock} - {stock_name}")
                 
                 # 收集所有价格数据点（日期和收盘价）
                 all_price_data = []  # 存储 (date, price, batch_date) 元组
@@ -692,17 +693,29 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
                                                         # 转换为日期对象
                                                         date_obj = parse_date(date_str)
                                                         if date_obj:
-                                                            all_price_data.append({
-                                                                'date': date_obj,
-                                                                'price': price,
-                                                                'batch': batch_date,
-                                                                'column_name': col_name
-                                                            })
+                                                            # 检查是否为交易日（周一至周五）
+                                                            if date_obj.weekday() < 5:  # 0-4 表示周一到周五
+                                                                all_price_data.append({
+                                                                    'date': date_obj,
+                                                                    'price': price,
+                                                                    'batch': batch_date,
+                                                                    'column_name': col_name
+                                                                })
                                             except:
                                                 continue
                 
-                # 按日期排序
+                # 按日期排序并去重
                 if all_price_data:
+                    # 按日期排序
+                    all_price_data.sort(key=lambda x: x['date'])
+                    
+                    # 去重：同一天只保留一个价格（取最后一个）
+                    unique_dates = {}
+                    for item in all_price_data:
+                        date_key = item['date'].strftime('%Y-%m-%d')
+                        unique_dates[date_key] = item
+                    
+                    all_price_data = list(unique_dates.values())
                     all_price_data.sort(key=lambda x: x['date'])
                     
                     # 准备绘图数据
@@ -712,6 +725,12 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
                     
                     # 创建折线图
                     fig, ax = plt.subplots(figsize=(12, 6))
+                    
+                    # 设置中文字体
+                    chinese_font = get_chinese_font()
+                    if chinese_font:
+                        plt.rcParams['font.sans-serif'] = [chinese_font] + plt.rcParams['font.sans-serif']
+                        plt.rcParams['axes.unicode_minus'] = False
                     
                     # 绘制主折线
                     ax.plot(dates, prices, marker='o', linewidth=2, color='blue', markersize=6)
@@ -727,8 +746,9 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
                     # 标记不同批次的数据点
                     for i, (date, price, batch) in enumerate(zip(dates, prices, batches)):
                         color = batch_colors[batch]
-                        ax.scatter(date, price, color=color, s=80, zorder=5, 
-                                 label=batch if batch not in [batches[j] for j in range(i)] else "")
+                        # 只在第一次出现该批次时添加图例
+                        label = batch if batch not in [batches[j] for j in range(i)] else ""
+                        ax.scatter(date, price, color=color, s=80, zorder=5, label=label)
                     
                     # 添加价格标签（每隔几个点显示一次，避免太拥挤）
                     n = max(1, len(dates) // 8)  # 每8个点左右显示一个标签
@@ -743,14 +763,20 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
                                       bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7))
                     
                     # 图表美化
-                    stock_name = stock_info_map.get(selected_stock, {}).get('name', '未知')
-                    ax.set_title(f'{selected_stock} {stock_name} - 价格走势图', fontsize=14, fontweight='bold')
+                    ax.set_title(f'{selected_stock} {stock_name} - 价格走势图（仅显示交易日）', 
+                               fontsize=14, fontweight='bold')
                     ax.set_xlabel('日期', fontsize=10)
                     ax.set_ylabel('收盘价 (元)', fontsize=10)
                     
                     # 设置X轴日期格式
                     ax.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d'))
-                    ax.xaxis.set_major_locator(plt.matplotlib.dates.DayLocator(interval=max(1, len(dates)//8)))
+                    # 根据数据点数量调整刻度间隔
+                    if len(dates) > 10:
+                        interval = max(1, len(dates) // 10)
+                        ax.xaxis.set_major_locator(plt.matplotlib.dates.DayLocator(interval=interval))
+                    else:
+                        ax.xaxis.set_major_locator(plt.matplotlib.dates.DayLocator(interval=1))
+                    
                     plt.xticks(rotation=45)
                     
                     # 添加图例
@@ -765,10 +791,10 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
                     plt.close()
                     
                     # 显示统计信息
-                    col1, col2, col3 = st.columns(3)
+                    col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
-                        st.metric("数据点数量", f"{len(dates)}个")
+                        st.metric("交易日数量", f"{len(dates)}个")
                     
                     with col2:
                         date_range = f"{dates[0].strftime('%Y-%m-%d')} 至 {dates[-1].strftime('%Y-%m-%d')}"
@@ -780,6 +806,9 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
                         total_change_pct = ((end_price - start_price) / start_price * 100) if start_price > 0 else 0
                         st.metric("期间涨跌幅", f"{total_change_pct:+.2f}%")
                     
+                    with col4:
+                        st.metric("涉及批次", f"{len(unique_batches)}个")
+                    
                     # 显示详细数据表格（可折叠）
                     with st.expander(f"📈 查看 {selected_stock} 详细价格数据", expanded=False):
                         # 创建详细数据表格
@@ -787,14 +816,14 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
                         for item in all_price_data:
                             detail_data.append({
                                 '日期': item['date'].strftime('%Y-%m-%d'),
-                                '收盘价': item['price'],
+                                '收盘价': f"{item['price']:.2f}",
                                 '数据批次': item['batch'],
-                                '数据列': item['column_name']
+                                '星期': ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][item['date'].weekday()]
                             })
                         
                         detail_df = pd.DataFrame(detail_data)
                         st.dataframe(
-                            detail_df.style.format({'收盘价': '{:.2f}'}),
+                            detail_df,
                             use_container_width=True
                         )
                         
