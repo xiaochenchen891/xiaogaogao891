@@ -8,7 +8,6 @@
 - 批次市场热度追踪（batch_trend.csv）
 - 个股多日轨迹可视化（斜率 vs 连续上涨）
 - 界面交互：侧边栏参数、阈值、选择股票等
-- 所属概念词云分析（修复中文显示问题）
 - 所有主要分析模块支持折叠/展开
 """
 
@@ -575,6 +574,8 @@ for uploaded_file in uploaded_files:
 # 排序批次日期
 all_batch_dates = sorted(set(all_batch_dates))
 
+
+
 # ========== 共同出现股票详细分析（可折叠） ==========
 with st.expander("🔄 共同出现股票详细分析", expanded=True):
     if len(all_batch_dates) > 1:
@@ -610,35 +611,19 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
             for result in all_results:
                 code = result['股票代码']
                 if code not in stock_info_map:
-                    # 生成同花顺链接
-                    ths_link = generate_ths_link(code)
-                    
                     stock_info_map[code] = {
                         'name': result['股票简称'],
                         'concept': stock_concepts.get(code, '未知'),
-                        'slope': stock_slope_map.get(code, np.nan),
-                        'link': ths_link
+                        'slope': stock_slope_map.get(code, np.nan)
                     }
 
             # 创建详细的共同股票信息表格
             common_stocks_details = []
-            common_stocks_download = []  # 用于下载的版本（不带链接）
             
             for code in common_stocks:
                 info = stock_info_map.get(code, {})
-                # 创建带链接的股票代码显示文本
-                linked_code = f'<a href="{info.get("link", "#")}" target="_blank" style="text-decoration: none; color: #1f77b4; font-weight: bold;">{code}</a>'
-                
                 common_stocks_details.append({
-                    '股票代码': linked_code,
-                    '股票简称': info.get('name', '未知'),
-                    '所属概念': info.get('concept', '未知'),
-                    '斜率(%)': info.get('slope', np.nan)
-                })
-                
-                # 下载版本（不带链接）
-                common_stocks_download.append({
-                    '股票代码': code,
+                    '股票代码': code,  # 移除链接，只显示纯文本
                     '股票简称': info.get('name', '未知'),
                     '所属概念': info.get('concept', '未知'),
                     '斜率(%)': info.get('slope', np.nan)
@@ -646,31 +631,17 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
             
             # 创建DataFrame并排序（按斜率降序）
             common_df = pd.DataFrame(common_stocks_details)
-            common_df_download = pd.DataFrame(common_stocks_download)  # 下载版本
-            
             if not common_df.empty and '斜率(%)' in common_df.columns:
                 common_df = common_df.sort_values('斜率(%)', ascending=False)
-                common_df_download = common_df_download.sort_values('斜率(%)', ascending=False)
             
-            # 显示详细的共同股票表格 (使用HTML渲染)
-            st.markdown("""
-            <style>
-                .dataframe th, .dataframe td {
-                    text-align: left;
-                    padding: 8px;
-                }
-                .dataframe a:hover {
-                    text-decoration: underline;
-                    color: #0056b3;
-                }
-            </style>
-            """, unsafe_allow_html=True)
+            # 显示详细的共同股票表格
+            st.dataframe(
+                common_df.style.format({'斜率(%)': '{:.3f}'}),
+                use_container_width=True
+            )
             
-            # 使用HTML表格显示带链接的股票代码
-            st.write(common_df.to_html(escape=False, index=False), unsafe_allow_html=True)
-            
-            # 提供下载功能（使用不带链接的版本）
-            csv = common_df_download.to_csv(index=False, encoding="utf-8-sig")
+            # 提供下载功能
+            csv = common_df.to_csv(index=False, encoding="utf-8-sig")
             st.download_button(
                 "下载共同股票详细信息 CSV",
                 data=csv,
@@ -678,19 +649,15 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
                 mime="text/csv"
             )
             
-            # ========== 修正：共同股票跨文件时间跨度折线图 ==========
+            # ========== 修正：共同股票跨文件时间跨度折线图（自动显示所有股票） ==========
             st.markdown("---")
             st.subheader("📊 共同股票跨文件时间跨度走势图")
             
-            # 让用户选择要查看的股票
-            selected_stock = st.selectbox(
-                "选择股票查看跨文件走势",
-                options=common_stocks,
-                format_func=lambda x: f"{x} - {stock_info_map.get(x, {}).get('name', '未知')}",
-                key="common_stock_selector"
-            )
-            
-            if selected_stock:
+            # 自动显示所有共同股票，不再使用下拉框
+            for i, selected_stock in enumerate(common_stocks):
+                st.markdown(f"---")
+                st.markdown(f"### {i+1}. {selected_stock} - {stock_info_map.get(selected_stock, {}).get('name', '未知')}")
+                
                 # 收集所有价格数据点（日期和收盘价）
                 all_price_data = []  # 存储 (date, price, batch_date) 元组
                 
@@ -744,7 +711,7 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
                     batches = [item['batch'] for item in all_price_data]
                     
                     # 创建折线图
-                    fig, ax = plt.subplots(figsize=(14, 7))
+                    fig, ax = plt.subplots(figsize=(12, 6))
                     
                     # 绘制主折线
                     ax.plot(dates, prices, marker='o', linewidth=2, color='blue', markersize=6)
@@ -760,10 +727,11 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
                     # 标记不同批次的数据点
                     for i, (date, price, batch) in enumerate(zip(dates, prices, batches)):
                         color = batch_colors[batch]
-                        ax.scatter(date, price, color=color, s=80, zorder=5, label=batch if i == batches.index(batch) else "")
+                        ax.scatter(date, price, color=color, s=80, zorder=5, 
+                                 label=batch if batch not in [batches[j] for j in range(i)] else "")
                     
                     # 添加价格标签（每隔几个点显示一次，避免太拥挤）
-                    n = max(1, len(dates) // 10)  # 每10个点左右显示一个标签
+                    n = max(1, len(dates) // 8)  # 每8个点左右显示一个标签
                     for i, (date, price) in enumerate(zip(dates, prices)):
                         if i % n == 0 or i == len(dates) - 1:
                             ax.annotate(f'{price:.2f}', 
@@ -771,25 +739,25 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
                                       textcoords="offset points",
                                       xytext=(0, 10),
                                       ha='center',
-                                      fontsize=9,
-                                      bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.7))
+                                      fontsize=8,
+                                      bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7))
                     
                     # 图表美化
                     stock_name = stock_info_map.get(selected_stock, {}).get('name', '未知')
-                    ax.set_title(f'{selected_stock} {stock_name} - 跨文件价格走势图', fontsize=16, fontweight='bold')
-                    ax.set_xlabel('日期', fontsize=12)
-                    ax.set_ylabel('收盘价 (元)', fontsize=12)
+                    ax.set_title(f'{selected_stock} {stock_name} - 价格走势图', fontsize=14, fontweight='bold')
+                    ax.set_xlabel('日期', fontsize=10)
+                    ax.set_ylabel('收盘价 (元)', fontsize=10)
                     
                     # 设置X轴日期格式
                     ax.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d'))
-                    ax.xaxis.set_major_locator(plt.matplotlib.dates.DayLocator(interval=max(1, len(dates)//10)))
+                    ax.xaxis.set_major_locator(plt.matplotlib.dates.DayLocator(interval=max(1, len(dates)//8)))
                     plt.xticks(rotation=45)
                     
                     # 添加图例
                     handles, labels = ax.get_legend_handles_labels()
                     by_label = dict(zip(labels, handles))  # 去重
                     if by_label:
-                        ax.legend(by_label.values(), by_label.keys(), title="数据批次")
+                        ax.legend(by_label.values(), by_label.keys(), title="数据批次", fontsize=8)
                     
                     ax.grid(True, alpha=0.3)
                     plt.tight_layout()
@@ -797,7 +765,7 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
                     plt.close()
                     
                     # 显示统计信息
-                    col1, col2, col3, col4 = st.columns(4)
+                    col1, col2, col3 = st.columns(3)
                     
                     with col1:
                         st.metric("数据点数量", f"{len(dates)}个")
@@ -812,11 +780,8 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
                         total_change_pct = ((end_price - start_price) / start_price * 100) if start_price > 0 else 0
                         st.metric("期间涨跌幅", f"{total_change_pct:+.2f}%")
                     
-                    with col4:
-                        st.metric("涉及批次", f"{len(unique_batches)}个")
-                    
-                    # 显示详细数据表格
-                    with st.expander("📈 查看详细价格数据", expanded=False):
+                    # 显示详细数据表格（可折叠）
+                    with st.expander(f"📈 查看 {selected_stock} 详细价格数据", expanded=False):
                         # 创建详细数据表格
                         detail_data = []
                         for item in all_price_data:
@@ -836,10 +801,11 @@ with st.expander("🔄 共同出现股票详细分析", expanded=True):
                         # 提供价格数据下载
                         csv_price = detail_df.to_csv(index=False, encoding="utf-8-sig")
                         st.download_button(
-                            "下载价格数据 CSV",
+                            f"下载 {selected_stock} 价格数据 CSV",
                             data=csv_price,
                             file_name=f"{selected_stock}_价格数据_{pd.Timestamp('today').strftime('%Y%m%d')}.csv",
-                            mime="text/csv"
+                            mime="text/csv",
+                            key=f"download_{selected_stock}"
                         )
                 else:
                     st.warning(f"未找到股票 {selected_stock} 在多个文件中的完整价格数据")
