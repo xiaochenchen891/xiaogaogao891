@@ -277,7 +277,7 @@ if not df_today.empty:
 
 st.caption("注：概念获取顺序：Tushare概念库 > 指数成员标签 > 公司主营业务关键字。")
 
-# ====================== 移动端优化 CSS（解决右侧边框 + 完整展示） ======================
+# ====================== 移动端终极优化 CSS（强制贴右 + 全屏展示） ======================
 st.markdown(f"""
 <style>
     @media (max-width: 768px) {{
@@ -285,39 +285,42 @@ st.markdown(f"""
             zoom: {zoom_level};
         }}
         
-        /* 核心修复：强制 dataframe 全宽 + 横向滚动 */
-        [data-testid="stDataFrame"], .stDataFrame {{
+        /* 1. 去掉 Streamlit 主容器右侧空白 */
+        .main .block-container {{
+            padding-right: 0 !important;
+            padding-left: 0 !important;
+            max-width: 100% !important;
+        }}
+        
+        /* 2. 强制 dataframe 完全贴边 + 全宽 */
+        [data-testid="stDataFrame"], .stDataFrame, .stDataFrame > div {{
             width: 100% !important;
             max-width: 100vw !important;
-            overflow-x: auto !important;
             padding: 0 !important;
             margin: 0 !important;
             border: none !important;
+            overflow-x: auto !important;
         }}
         
-        .stDataFrame > div {{
-            width: 100% !important;
-        }}
-        
+        /* 3. 表格强制横向滚动 + 足够宽 */
         .stDataFrame table {{
             font-size: 15px !important;
             width: max-content !important;
-            min-width: 950px !important;   /* 强制表格够宽，触发滚动 */
+            min-width: 980px !important;   /* 关键：强制触发横向滚动 */
             white-space: nowrap !important;
         }}
         
-        .stDataFrame td, .stDataFrame th {{
-            padding: 8px 6px !important;
+        .stDataFrame th, .stDataFrame td {{
+            padding: 10px 6px !important;
             white-space: nowrap !important;
         }}
         
-        /* 滚动条更明显 */
+        /* 4. 美化滚动条 */
         .stDataFrame::-webkit-scrollbar {{
-            height: 10px !important;
-            background: #f1f1f1;
+            height: 8px !important;
         }}
         .stDataFrame::-webkit-scrollbar-thumb {{
-            background: #3b82f6;
+            background: #3b82f6 !important;
             border-radius: 10px;
         }}
     }}
