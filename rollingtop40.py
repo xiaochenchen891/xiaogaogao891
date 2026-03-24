@@ -5,7 +5,7 @@ from datetime import timedelta
 import tushare as ts
 import numpy as np
 
-# ====================== 1. 页面配置 ======================
+# ====================== 1. 页面配置与美化 ======================
 st.set_page_config(layout="wide", page_title="强势股排名动态追踪", page_icon="🚀")
 pro = ts.pro_api(st.secrets["tushare"]["token"])
 st.markdown("""
@@ -17,7 +17,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ====================== 2. 实时股价函数 ======================
+# ====================== 2. celue2 实时股价函数 ======================
 def get_ts_code(code):
     code = str(code).zfill(6)
     if code.startswith('6'): return code + '.SH'
@@ -148,7 +148,7 @@ with st.sidebar:
         st.session_state.current_date = picked_date
         st.rerun()
 
-# ====================== 5. 主逻辑 ======================
+# ====================== 5. 主逻辑（关键修复在这里） ======================
 stock_info_map = get_stock_info()
 needed_dates = get_needed_dates(st.session_state.current_date, window_days)
 
@@ -156,14 +156,14 @@ if len(needed_dates) < window_days + 1:
     st.warning("所选日期的历史数据不足。")
     st.stop()
 
-with st.spinner(f"正在分析 {needed_dates[-1]} ..."):
+with st.spinner(f"正在分析 {needed_dates[-1]} 的概念与排名数据..."):
     all_snaps = [fetch_daily_snapshot(d) for d in needed_dates if not fetch_daily_snapshot(d).empty]
     market_df = pd.concat(all_snaps, ignore_index=True)
     market_df['trade_date'] = pd.to_datetime(market_df['trade_date'])
 
     df_today = calculate_top_n(needed_dates[-1], market_df, window_days, top_n)
     
-    # 自动找昨天
+    # 【核心修复】自动寻找有效昨天日期
     yesterday_date = None
     df_yesterday = pd.DataFrame()
     for i in range(2, len(needed_dates) + 1):
@@ -177,15 +177,11 @@ with st.spinner(f"正在分析 {needed_dates[-1]} ..."):
     top_codes = df_today['ts_code'].tolist()
     concept_map = get_concept_combined(top_codes)
 
-# ====================== 6. 界面呈现（带诊断列） ======================
+# ====================== 6. 界面呈现 ======================
 st.markdown('<h1 class="title">🚀 强势股概念排名动态追踪</h1>', unsafe_allow_html=True)
 
 if not df_today.empty:
-    y_rank_map = {}
-    if not df_yesterday.empty:
-        for _, row in df_yesterday.iterrows():
-            code6 = row['ts_code'][:6]
-            y_rank_map[code6] = row['排名']
+    y_rank_map = {row['ts_code']: row['排名'] for _, row in df_yesterday.iterrows()} if not df_yesterday.empty else {}
 
     # 指标卡片
     col_a, col_b, col_c, col_d = st.columns(4)
@@ -194,9 +190,10 @@ if not df_today.empty:
         info1 = stock_info_map.get(top1['ts_code'], {})
         st.markdown(f'<div class="metric-card"><h4>🏆 榜首龙头</h4><h3>{info1.get("name","-")}</h3><p style="color:#22c55e; font-size:1.8rem; margin:0;">+{top1["pct_chg"]:.2f}%</p></div>', unsafe_allow_html=True)
     with col_b: st.metric(f"Top{top_n} 均幅", f"{df_today['pct_chg'].mean():.2f}%")
-    with col_c: st.metric("新晋上榜", sum(1 for c in df_today['ts_code'] if c[:6] not in y_rank_map))
-    with col_d: st.metric("排名上升", sum(1 for _, r in df_today.iterrows() if y_rank_map.get(r['ts_code'][:6], 999) > r['排名']))
+    with col_c: st.metric("新晋上榜", sum(1 for c in df_today['ts_code'] if c not in y_rank_map))
+    with col_d: st.metric("排名上升", sum(1 for _, r in df_today.iterrows() if y_rank_map.get(r['ts_code'], 999) > r['排名']))
 
+    # 日期导航 + 调试信息
     st.markdown("---")
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1:
@@ -205,7 +202,7 @@ if not df_today.empty:
             st.rerun()
     with c2:
         st.subheader(f"📅 **数据日期：{needed_dates[-1]}**")
-        st.caption(f"昨天对比日期：**{yesterday_date or '暂无'}** | 昨天数据：**{'✅ 成功' if not df_yesterday.empty else '❌ 暂缺'}**")
+        st.caption(f"昨天对比日期：**{yesterday_date or '暂无'}** | 昨天数据：**{'✅ 成功' if not df_yesterday.empty else '❌ 暂缺（已标记新榜）'}**")
     with c3:
         full_cal = get_trading_calendar(st.session_state.current_date)
         future_dates = [d for d in full_cal if d > needed_dates[-1]]
@@ -213,9 +210,15 @@ if not df_today.empty:
             st.session_state.current_date = future_dates[0]
             st.rerun()
 
-    # 实时价
+    # 实时价 + 趋势列
     top_codes_6 = [code[:6] for code in df_today['ts_code'].tolist()]
-    realtime_map = batch_get_realtime_prices(top_codes_6) if st.session_state.current_date == datetime.date.today() else {code[:6]: round(row['close_end'], 2) for _, row in df_today.iterrows()}
+    realtime_map = {}
+    if st.session_state.current_date == datetime.date.today():
+        with st.spinner("📡 正在拉取实时股价..."):
+            realtime_map = batch_get_realtime_prices(top_codes_6)
+    else:
+        for _, row in df_today.iterrows():
+            realtime_map[row['ts_code'][:6]] = round(row['close_end'], 2)
 
     report_list = []
     for _, row in df_today.iterrows():
@@ -223,16 +226,16 @@ if not df_today.empty:
         code6 = ts_code[:6]
         info = stock_info_map.get(ts_code, {'name':'未知','industry':'其他'})
         today_rank = int(row['排名'])
-        y_rank = y_rank_map.get(code6)
+        y_rank = y_rank_map.get(ts_code)
         
         if y_rank is None:
-            trend_label = "🆕 新榜"
+            trend_label = "🆕 新榜（昨日数据暂缺）"
             delta = 0
-            yesterday_rank_str = "新榜"
         else:
             delta = y_rank - today_rank
             trend_label = f"↑ {delta}" if delta > 0 else f"↓ {abs(delta)}" if delta < 0 else "持平"
-            yesterday_rank_str = str(y_rank)
+        
+        current_price = realtime_map.get(code6, "-")
         
         report_list.append({
             "排名": today_rank,
@@ -241,9 +244,7 @@ if not df_today.empty:
             "所属行业": info['industry'],
             "所属概念": concept_map.get(ts_code, "-"),
             f"{window_days}日涨幅": round(row['pct_chg'], 2),
-            "实时价": realtime_map.get(code6, "-"),
-            "昨天排名": yesterday_rank_str,
-            "当前排名": today_rank,
+            "实时价": current_price,
             "变动值": delta,
             "趋势": trend_label,
         })
@@ -280,11 +281,9 @@ if not df_today.empty:
             "所属概念": st.column_config.TextColumn("所属概念", width=220),
             f"{window_days}日涨幅": st.column_config.ProgressColumn("涨幅", format="%.2f%%", min_value=0, max_value=final_df[f"{window_days}日涨幅"].max()),
             "实时价": st.column_config.NumberColumn("实时价", format="%.2f", width=100),
-            "昨天排名": st.column_config.NumberColumn("昨天排名", width=80),
-            "当前排名": st.column_config.NumberColumn("当前排名", width=80),
             "趋势": st.column_config.TextColumn("趋势", width=90)
         },
-        use_container_width=True, height=700, hide_index=True
+        use_container_width=True, height=600, hide_index=True
     )
 
     st.divider()
@@ -294,15 +293,16 @@ if not df_today.empty:
     
     st.download_button("📥 导出分析结果 (CSV)", final_df.to_csv(index=False).encode('utf-8'), f"Rank_{needed_dates[-1]}.csv", "text/csv")
 
-st.caption("注：新增了「昨天排名」和「当前排名」列用于诊断。如果昨天排名都是「新榜」，说明昨天Top40和今天完全不同。")
+st.caption("注：概念获取顺序：Tushare概念库 > 指数成员标签 > 公司主营业务关键字。实时价使用 celue2 多接口机制")
 
-# 移动端优化
+# ====================== 移动端优化 ======================
 st.markdown(f"""
 <style>
     @media (max-width: 768px) {{
         .stApp {{ zoom: {zoom_level}; }}
         .main .block-container {{ padding-right: 0 !important; padding-left: 0 !important; max-width: 100% !important; }}
-        .stDataFrame table {{ font-size: 15px !important; width: max-content !important; min-width: 1100px !important; }}
+        [data-testid="stDataFrame"], .stDataFrame {{ width: 100% !important; max-width: 100vw !important; }}
+        .stDataFrame table {{ font-size: 15px !important; width: max-content !important; min-width: 980px !important; }}
     }}
 </style>
 """, unsafe_allow_html=True)
