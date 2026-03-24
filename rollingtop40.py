@@ -17,16 +17,16 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ====================== 2. 【直接使用 celue2 的实时批量函数】 ======================
+# ====================== 2. celue2 批量实时行情（核心函数） ======================
 def get_ts_code(code):
     code = str(code).zfill(6)
     if code.startswith('6'): return code + '.SH'
     elif code.startswith(('0', '3', '8')): return code + '.SZ'
     return code + '.SH'
 
-@st.cache_data(ttl=60)   # 1分钟缓存，足够实时
+@st.cache_data(ttl=60)
 def get_market_realtime_prices(ts_codes):
-    """celue2 原版批量实时行情（sina接口，每批50只）"""
+    """celue2 原版批量实时行情（sina接口）"""
     all_prices = []
     chunk_size = 50
     for i in range(0, len(ts_codes), chunk_size):
@@ -100,7 +100,7 @@ def get_trading_calendar(end_date):
 def get_needed_dates(current_date, window_days):
     all_dates = get_trading_calendar(current_date)
     past_dates = [d for d in all_dates if d <= current_date]
-    needed_n = window_days + 30   # ← 加大缓冲，解决昨天对比问题
+    needed_n = window_days + 30
     return past_dates[-needed_n:] if len(past_dates) >= needed_n else past_dates
 
 @st.cache_data(ttl=3600*12)
@@ -108,38 +108,46 @@ def fetch_daily_snapshot(trade_date):
     pro = ts.pro_api(st.secrets["tushare"]["token"])
     return pro.daily(trade_date=trade_date.strftime("%Y%m%d"), fields='ts_code,trade_date,close')
 
-# ====================== 4. 计算排名（支持实时模式） ======================
 def calculate_top_n(target_date, full_df, window_days, top_n, is_realtime=False):
     available_dates = sorted(full_df['trade_date'].unique())
     target_dt = pd.Timestamp(target_date)
     past_dates = [d for d in available_dates if d <= target_dt]
     if len(past_dates) < window_days + 1 and not is_realtime:
         return pd.DataFrame()
-
     start_d = past_dates[-(window_days + 1)] if not is_realtime else past_dates[-window_days]
     df_start = full_df[full_df['trade_date'] == start_d][['ts_code', 'close']].rename(columns={'close': 'close_start'})
-
     if is_realtime:
         all_codes = df_start['ts_code'].tolist()
         df_end = get_market_realtime_prices(all_codes)
     else:
         end_d = past_dates[-1]
         df_end = full_df[full_df['trade_date'] == end_d][['ts_code', 'close']].rename(columns={'close': 'close_end'})
-
     if df_end.empty:
         return pd.DataFrame()
-
     merged = pd.merge(df_end, df_start, on='ts_code')
     merged['pct_chg'] = (merged['close_end'] - merged['close_start']) / merged['close_start'] * 100
     top_df = merged.sort_values('pct_chg', ascending=False).head(top_n).reset_index(drop=True)
     top_df['排名'] = top_df.index + 1
     return top_df
 
+# ====================== 4. 侧边栏（提前到这里！） ======================
+with st.sidebar:
+    st.header("⚙️ 控制面板")
+    st.divider()
+    zoom_level = st.slider("🔍 界面缩放（手机推荐）", 0.7, 1.5, 1.0, 0.05)
+    window_days = st.number_input("统计周期 (天)", 5, 60, 10, key="window_days")
+    top_n = st.number_input("显示数量", 10, 100, 40, key="top_n")
+    st.divider()
+    picked_date = st.date_input("手动选择观察日期", value=st.session_state.current_date)
+    if picked_date != st.session_state.current_date:
+        st.session_state.current_date = picked_date
+        st.rerun()
+
 # ====================== 5. 主逻辑 ======================
 stock_info_map = get_stock_info()
-needed_dates = get_needed_dates(st.session_state.current_date, window_days)
+needed_dates = get_needed_dates(st.session_state.current_date, st.session_state.window_days)
 
-if len(needed_dates) < window_days + 1:
+if len(needed_dates) < st.session_state.window_days + 1:
     st.warning("所选日期的历史数据不足。")
     st.stop()
 
@@ -148,7 +156,6 @@ with st.spinner(f"正在分析 {needed_dates[-1]} ..."):
     market_df = pd.concat(all_snaps, ignore_index=True)
     market_df['trade_date'] = pd.to_datetime(market_df['trade_date'])
 
-    # 【实时模式判断】今天还在交易中 → 使用 celue2 的批量实时行情
     is_today = (needed_dates[-1] == datetime.date.today())
     today_has_daily_data = not market_df[market_df['trade_date'] == pd.Timestamp(needed_dates[-1])].empty
     need_realtime_mode = is_today and not today_has_daily_data
@@ -156,14 +163,14 @@ with st.spinner(f"正在分析 {needed_dates[-1]} ..."):
     if need_realtime_mode:
         st.info("⚡ **盘中动态模式已启动**：正在用新浪实时行情计算全市场动态排名（1分钟缓存）")
 
-    df_today = calculate_top_n(needed_dates[-1], market_df, window_days, top_n, is_realtime=need_realtime_mode)
+    df_today = calculate_top_n(needed_dates[-1], market_df, st.session_state.window_days, st.session_state.top_n, is_realtime=need_realtime_mode)
 
-    # 自动找昨天（历史对比）
+    # 自动找昨天
     yesterday_date = None
     df_yesterday = pd.DataFrame()
     for i in range(2, len(needed_dates) + 1):
         test_date = needed_dates[-i]
-        df_test = calculate_top_n(test_date, market_df, window_days, top_n)
+        df_test = calculate_top_n(test_date, market_df, st.session_state.window_days, st.session_state.top_n)
         if not df_test.empty:
             yesterday_date = test_date
             df_yesterday = df_test
@@ -187,7 +194,7 @@ if not df_today.empty:
         top1 = df_today.iloc[0]
         info1 = stock_info_map.get(top1['ts_code'], {})
         st.markdown(f'<div class="metric-card"><h4>🏆 榜首龙头</h4><h3>{info1.get("name","-")}</h3><p style="color:#22c55e; font-size:1.8rem; margin:0;">+{top1["pct_chg"]:.2f}%</p></div>', unsafe_allow_html=True)
-    with col_b: st.metric(f"Top{top_n} 均幅", f"{df_today['pct_chg'].mean():.2f}%")
+    with col_b: st.metric(f"Top{st.session_state.top_n} 均幅", f"{df_today['pct_chg'].mean():.2f}%")
     with col_c: st.metric("新晋上榜", sum(1 for c in df_today['ts_code'] if c[:6] not in y_rank_map))
     with col_d: st.metric("排名上升", sum(1 for _, r in df_today.iterrows() if y_rank_map.get(r['ts_code'][:6], 999) > r['排名']))
 
@@ -207,7 +214,6 @@ if not df_today.empty:
             st.session_state.current_date = future_dates[0]
             st.rerun()
 
-    # 实时价
     top_codes_6 = [code[:6] for code in df_today['ts_code'].tolist()]
     realtime_map = batch_get_realtime_prices(top_codes_6) if st.session_state.current_date == datetime.date.today() else {code[:6]: round(row['close_end'], 2) for _, row in df_today.iterrows()}
 
@@ -218,21 +224,19 @@ if not df_today.empty:
         info = stock_info_map.get(ts_code, {'name':'未知','industry':'其他'})
         today_rank = int(row['排名'])
         y_rank = y_rank_map.get(code6)
-        
         if y_rank is None:
             trend_label = "🆕 新榜"
             delta = 0
         else:
             delta = y_rank - today_rank
             trend_label = f"↑ {delta}" if delta > 0 else f"↓ {abs(delta)}" if delta < 0 else "持平"
-        
         report_list.append({
             "排名": today_rank,
             "代码": code6,
             "名称": info['name'],
             "所属行业": info['industry'],
             "所属概念": concept_map.get(ts_code, "-"),
-            f"{window_days}日涨幅": round(row['pct_chg'], 2),
+            f"{st.session_state.window_days}日涨幅": round(row['pct_chg'], 2),
             "实时价": realtime_map.get(code6, "-"),
             "变动值": delta,
             "趋势": trend_label,
@@ -268,7 +272,7 @@ if not df_today.empty:
             "名称": st.column_config.TextColumn("名称", width=130),
             "所属行业": st.column_config.TextColumn("行业", width=90),
             "所属概念": st.column_config.TextColumn("所属概念", width=220),
-            f"{window_days}日涨幅": st.column_config.ProgressColumn("涨幅", format="%.2f%%", min_value=0, max_value=final_df[f"{window_days}日涨幅"].max()),
+            f"{st.session_state.window_days}日涨幅": st.column_config.ProgressColumn("涨幅", format="%.2f%%", min_value=0, max_value=final_df[f"{st.session_state.window_days}日涨幅"].max()),
             "实时价": st.column_config.NumberColumn("实时价", format="%.2f", width=100),
             "趋势": st.column_config.TextColumn("趋势", width=90)
         },
@@ -282,7 +286,7 @@ if not df_today.empty:
     
     st.download_button("📥 导出分析结果 (CSV)", final_df.to_csv(index=False).encode('utf-8'), f"Rank_{needed_dates[-1]}.csv", "text/csv")
 
-st.caption("注：已融合 celue2.py 的批量实时行情 + 盘中动态模式。现在3月24日也能实时更新排名了！")
+st.caption("注：已融合 celue2 批量实时行情 + 盘中动态模式。现在3月24日也能实时更新排名了！")
 
 # ====================== 移动端优化 ======================
 st.markdown(f"""
