@@ -7,7 +7,7 @@ import numpy as np
 
 # ====================== 1. 页面配置与超级美化 CSS ======================
 st.set_page_config(layout="wide", page_title="强势股排名动态追踪", page_icon="🚀")
-
+pro = ts.pro_api(st.secrets["tushare"]["token"])
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
