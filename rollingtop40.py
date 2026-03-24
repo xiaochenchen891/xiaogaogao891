@@ -148,7 +148,7 @@ with st.sidebar:
         st.session_state.current_date = picked_date
         st.rerun()
 
-# ====================== 5. 主逻辑（关键修复在这里） ======================
+# ====================== 5. 主逻辑（最终修复版） ======================
 stock_info_map = get_stock_info()
 needed_dates = get_needed_dates(st.session_state.current_date, window_days)
 
@@ -163,7 +163,7 @@ with st.spinner(f"正在分析 {needed_dates[-1]} 的概念与排名数据..."):
 
     df_today = calculate_top_n(needed_dates[-1], market_df, window_days, top_n)
     
-    # 【核心修复】自动寻找有效昨天日期
+    # 【最终修复】自动找昨天 + 用6位代码统一对比
     yesterday_date = None
     df_yesterday = pd.DataFrame()
     for i in range(2, len(needed_dates) + 1):
@@ -181,19 +181,22 @@ with st.spinner(f"正在分析 {needed_dates[-1]} 的概念与排名数据..."):
 st.markdown('<h1 class="title">🚀 强势股概念排名动态追踪</h1>', unsafe_allow_html=True)
 
 if not df_today.empty:
-    y_rank_map = {row['ts_code']: row['排名'] for _, row in df_yesterday.iterrows()} if not df_yesterday.empty else {}
+    # 用6位代码统一做排名映射（彻底解决匹配问题）
+    y_rank_map = {}
+    if not df_yesterday.empty:
+        for _, row in df_yesterday.iterrows():
+            code6 = row['ts_code'][:6]
+            y_rank_map[code6] = row['排名']
 
-    # 指标卡片
     col_a, col_b, col_c, col_d = st.columns(4)
     with col_a:
         top1 = df_today.iloc[0]
         info1 = stock_info_map.get(top1['ts_code'], {})
         st.markdown(f'<div class="metric-card"><h4>🏆 榜首龙头</h4><h3>{info1.get("name","-")}</h3><p style="color:#22c55e; font-size:1.8rem; margin:0;">+{top1["pct_chg"]:.2f}%</p></div>', unsafe_allow_html=True)
     with col_b: st.metric(f"Top{top_n} 均幅", f"{df_today['pct_chg'].mean():.2f}%")
-    with col_c: st.metric("新晋上榜", sum(1 for c in df_today['ts_code'] if c not in y_rank_map))
-    with col_d: st.metric("排名上升", sum(1 for _, r in df_today.iterrows() if y_rank_map.get(r['ts_code'], 999) > r['排名']))
+    with col_c: st.metric("新晋上榜", sum(1 for c in df_today['ts_code'] if c[:6] not in y_rank_map))
+    with col_d: st.metric("排名上升", sum(1 for _, r in df_today.iterrows() if y_rank_map.get(r['ts_code'][:6], 999) > r['排名']))
 
-    # 日期导航 + 调试信息
     st.markdown("---")
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1:
@@ -202,7 +205,7 @@ if not df_today.empty:
             st.rerun()
     with c2:
         st.subheader(f"📅 **数据日期：{needed_dates[-1]}**")
-        st.caption(f"昨天对比日期：**{yesterday_date or '暂无'}** | 昨天数据：**{'✅ 成功' if not df_yesterday.empty else '❌ 暂缺（已标记新榜）'}**")
+        st.caption(f"昨天对比日期：**{yesterday_date or '暂无'}** | 昨天数据：**{'✅ 成功' if not df_yesterday.empty else '❌ 暂缺'}**")
     with c3:
         full_cal = get_trading_calendar(st.session_state.current_date)
         future_dates = [d for d in full_cal if d > needed_dates[-1]]
@@ -210,7 +213,7 @@ if not df_today.empty:
             st.session_state.current_date = future_dates[0]
             st.rerun()
 
-    # 实时价 + 趋势列
+    # 实时价
     top_codes_6 = [code[:6] for code in df_today['ts_code'].tolist()]
     realtime_map = {}
     if st.session_state.current_date == datetime.date.today():
@@ -226,7 +229,7 @@ if not df_today.empty:
         code6 = ts_code[:6]
         info = stock_info_map.get(ts_code, {'name':'未知','industry':'其他'})
         today_rank = int(row['排名'])
-        y_rank = y_rank_map.get(ts_code)
+        y_rank = y_rank_map.get(code6)
         
         if y_rank is None:
             trend_label = "🆕 新榜（昨日数据暂缺）"
