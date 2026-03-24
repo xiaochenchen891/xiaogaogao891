@@ -17,46 +17,34 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ====================== 2. 实时股价函数 ======================
+# ====================== 2. 【直接使用 celue2 的实时批量函数】 ======================
 def get_ts_code(code):
     code = str(code).zfill(6)
     if code.startswith('6'): return code + '.SH'
     elif code.startswith(('0', '3', '8')): return code + '.SZ'
     return code + '.SH'
 
-@st.cache_data(ttl=30)
-def get_real_time_price(code, target_date=None):
-    ts_code = get_ts_code(code)
-    token = st.secrets["tushare"]["token"]
-    pro = ts.pro_api(token)
-    today_str = datetime.date.today().strftime("%Y%m%d")
-    is_today = (target_date is None or str(target_date).replace("-", "") == today_str)
-    interfaces = [
-        ("pro.quote", lambda: pro.quote(ts_code=ts_code), 'price'),
-        ("rt_k", lambda: pro.rt_k(ts_code=ts_code), 'close'),
-        ("realtime_sina", lambda: ts.realtime_quote(ts_code=ts_code, src='sina'), 'PRICE'),
-        ("realtime_dc", lambda: ts.realtime_quote(ts_code=ts_code, src='dc'), 'PRICE'),
-        ("1min", lambda: pro.min(ts_code=ts_code, freq='1min', start_date=today_str, end_date=today_str), 'close'),
-    ]
-    for _, func, col in interfaces:
+@st.cache_data(ttl=60)   # 1分钟缓存，足够实时
+def get_market_realtime_prices(ts_codes):
+    """celue2 原版批量实时行情（sina接口，每批50只）"""
+    all_prices = []
+    chunk_size = 50
+    for i in range(0, len(ts_codes), chunk_size):
+        batch_codes = ",".join(ts_codes[i:i + chunk_size])
         try:
-            df = func()
+            df = ts.realtime_quote(ts_code=batch_codes, src='sina')
             if df is not None and not df.empty:
-                price = float(df.iloc[-1][col])
-                if price > 0: return round(price, 2)
-        except: continue
-    try:
-        df = pro.daily(ts_code=ts_code, trade_date=today_str if is_today else str(target_date).replace("-", ""), fields='close')
-        return round(float(df['close'].iloc[0]), 2) if not df.empty else None
-    except:
-        return None
-
-def batch_get_realtime_prices(codes):
-    prices = {}
-    for code in codes:
-        p = get_real_time_price(code)
-        if p: prices[code] = p
-    return prices
+                col = 'PRICE' if 'PRICE' in df.columns else 'price'
+                temp = df[['ts_code', col]].copy()
+                temp.rename(columns={col: 'close_end'}, inplace=True)
+                all_prices.append(temp)
+        except:
+            continue
+    if all_prices:
+        res_df = pd.concat(all_prices, ignore_index=True)
+        res_df['close_end'] = pd.to_numeric(res_df['close_end'], errors='coerce')
+        return res_df[res_df['close_end'] > 0]
+    return pd.DataFrame(columns=['ts_code', 'close_end'])
 
 # ====================== 3. Session State & 核心函数 ======================
 if "current_date" not in st.session_state:
@@ -109,11 +97,10 @@ def get_trading_calendar(end_date):
     df = pro.trade_cal(exchange='', start_date=start_point, end_date=end_point, is_open='1')
     return sorted(pd.to_datetime(df['cal_date']).dt.date.tolist())
 
-# 【关键修复】这里加大了历史缓冲
 def get_needed_dates(current_date, window_days):
     all_dates = get_trading_calendar(current_date)
     past_dates = [d for d in all_dates if d <= current_date]
-    needed_n = window_days + 30   # ←←← 原来是 +2，现在改成 +30
+    needed_n = window_days + 30   # ← 加大缓冲，解决昨天对比问题
     return past_dates[-needed_n:] if len(past_dates) >= needed_n else past_dates
 
 @st.cache_data(ttl=3600*12)
@@ -121,33 +108,32 @@ def fetch_daily_snapshot(trade_date):
     pro = ts.pro_api(st.secrets["tushare"]["token"])
     return pro.daily(trade_date=trade_date.strftime("%Y%m%d"), fields='ts_code,trade_date,close')
 
-def calculate_top_n(target_date, full_df, window_days, top_n):
+# ====================== 4. 计算排名（支持实时模式） ======================
+def calculate_top_n(target_date, full_df, window_days, top_n, is_realtime=False):
     available_dates = sorted(full_df['trade_date'].unique())
     target_dt = pd.Timestamp(target_date)
     past_dates = [d for d in available_dates if d <= target_dt]
-    if len(past_dates) < window_days + 1:
+    if len(past_dates) < window_days + 1 and not is_realtime:
         return pd.DataFrame()
-    end_d, start_d = past_dates[-1], past_dates[-(window_days + 1)]
-    df_end = full_df[full_df['trade_date'] == end_d][['ts_code', 'close']].rename(columns={'close': 'close_end'})
+
+    start_d = past_dates[-(window_days + 1)] if not is_realtime else past_dates[-window_days]
     df_start = full_df[full_df['trade_date'] == start_d][['ts_code', 'close']].rename(columns={'close': 'close_start'})
+
+    if is_realtime:
+        all_codes = df_start['ts_code'].tolist()
+        df_end = get_market_realtime_prices(all_codes)
+    else:
+        end_d = past_dates[-1]
+        df_end = full_df[full_df['trade_date'] == end_d][['ts_code', 'close']].rename(columns={'close': 'close_end'})
+
+    if df_end.empty:
+        return pd.DataFrame()
+
     merged = pd.merge(df_end, df_start, on='ts_code')
     merged['pct_chg'] = (merged['close_end'] - merged['close_start']) / merged['close_start'] * 100
     top_df = merged.sort_values('pct_chg', ascending=False).head(top_n).reset_index(drop=True)
     top_df['排名'] = top_df.index + 1
     return top_df
-
-# ====================== 4. 侧边栏 ======================
-with st.sidebar:
-    st.header("⚙️ 控制面板")
-    st.divider()
-    zoom_level = st.slider("🔍 界面缩放（手机推荐）", 0.7, 1.5, 1.0, 0.05)
-    window_days = st.number_input("统计周期 (天)", 5, 60, 10)
-    top_n = st.number_input("显示数量", 10, 100, 40)
-    st.divider()
-    picked_date = st.date_input("手动选择观察日期", value=st.session_state.current_date)
-    if picked_date != st.session_state.current_date:
-        st.session_state.current_date = picked_date
-        st.rerun()
 
 # ====================== 5. 主逻辑 ======================
 stock_info_map = get_stock_info()
@@ -162,8 +148,17 @@ with st.spinner(f"正在分析 {needed_dates[-1]} ..."):
     market_df = pd.concat(all_snaps, ignore_index=True)
     market_df['trade_date'] = pd.to_datetime(market_df['trade_date'])
 
-    df_today = calculate_top_n(needed_dates[-1], market_df, window_days, top_n)
-    
+    # 【实时模式判断】今天还在交易中 → 使用 celue2 的批量实时行情
+    is_today = (needed_dates[-1] == datetime.date.today())
+    today_has_daily_data = not market_df[market_df['trade_date'] == pd.Timestamp(needed_dates[-1])].empty
+    need_realtime_mode = is_today and not today_has_daily_data
+
+    if need_realtime_mode:
+        st.info("⚡ **盘中动态模式已启动**：正在用新浪实时行情计算全市场动态排名（1分钟缓存）")
+
+    df_today = calculate_top_n(needed_dates[-1], market_df, window_days, top_n, is_realtime=need_realtime_mode)
+
+    # 自动找昨天（历史对比）
     yesterday_date = None
     df_yesterday = pd.DataFrame()
     for i in range(2, len(needed_dates) + 1):
@@ -212,6 +207,7 @@ if not df_today.empty:
             st.session_state.current_date = future_dates[0]
             st.rerun()
 
+    # 实时价
     top_codes_6 = [code[:6] for code in df_today['ts_code'].tolist()]
     realtime_map = batch_get_realtime_prices(top_codes_6) if st.session_state.current_date == datetime.date.today() else {code[:6]: round(row['close_end'], 2) for _, row in df_today.iterrows()}
 
@@ -286,7 +282,7 @@ if not df_today.empty:
     
     st.download_button("📥 导出分析结果 (CSV)", final_df.to_csv(index=False).encode('utf-8'), f"Rank_{needed_dates[-1]}.csv", "text/csv")
 
-st.caption("注：已加大历史数据缓冲，现在3月23日和24日排名会正常对比")
+st.caption("注：已融合 celue2.py 的批量实时行情 + 盘中动态模式。现在3月24日也能实时更新排名了！")
 
 # ====================== 移动端优化 ======================
 st.markdown(f"""
