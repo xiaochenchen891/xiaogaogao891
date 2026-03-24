@@ -35,8 +35,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ====================== 2. 初始化 Session State ======================
-if "tushare_token" not in st.session_state:
-    st.session_state.tushare_token = ""
 if "current_date" not in st.session_state:
     st.session_state.current_date = datetime.date.today()
 
@@ -46,7 +44,7 @@ if "current_date" not in st.session_state:
 def get_stock_info():
     """获取股票基础信息（名称、行业）"""
     try:
-        pro = ts.pro_api(st.session_state.tushare_token)
+        pro = ts.pro_api(st.secrets["tushare"]["token"])
         df = pro.stock_basic(exchange='', list_status='L', fields='ts_code,name,industry')
         return {row['ts_code']: {'name': row['name'], 'industry': row['industry'] or "其他"} 
                 for _, row in df.iterrows()}
@@ -60,7 +58,7 @@ def get_concept_combined(ts_code_list):
     三级降级机制获取概念：
     1. Tushare标准概念库 -> 2. 指数成分标签 -> 3. 主营业务关键词提取
     """
-    pro = ts.pro_api(st.session_state.tushare_token)
+    pro = ts.pro_api(st.secrets["tushare"]["token"])
     concept_map = {code: [] for code in ts_code_list}
     
     # --- 策略 1: 标准概念明细 ---
@@ -99,7 +97,7 @@ def get_concept_combined(ts_code_list):
 @st.cache_data(ttl=3600*24)
 def get_trading_calendar(end_date):
     """获取交易日历"""
-    pro = ts.pro_api(st.session_state.tushare_token)
+    pro = ts.pro_api(st.secrets["tushare"]["token"])
     start_point = (end_date - timedelta(days=365)).strftime("%Y%m%d")
     end_point = (end_date + timedelta(days=10)).strftime("%Y%m%d")
     df = pro.trade_cal(exchange='', start_date=start_point, end_date=end_point, is_open='1')
@@ -138,24 +136,14 @@ def calculate_top_n(target_date, full_df, window_days, top_n):
 # ====================== 4. 侧边栏 ======================
 with st.sidebar:
     st.header("⚙️ 控制面板")
-    token = st.text_input("🔑 Tushare Token", type="password", value=st.session_state.tushare_token)
-    if st.button("💾 保存并更新配置"):
-        st.session_state.tushare_token = token
-        st.rerun()
-
     window_days = st.number_input("统计周期 (天)", 5, 60, 10)
     top_n = st.number_input("显示数量", 10, 100, 40)
-    
+   
     st.divider()
     picked_date = st.date_input("手动选择观察日期", value=st.session_state.current_date)
     if picked_date != st.session_state.current_date:
         st.session_state.current_date = picked_date
         st.rerun()
-
-# ====================== 5. 主逻辑流程 ======================
-if not st.session_state.tushare_token:
-    st.info("💡 请先在侧边栏配置您的 Tushare Token。")
-    st.stop()
 
 stock_info_map = get_stock_info()
 needed_dates = get_needed_dates(st.session_state.current_date, window_days)
