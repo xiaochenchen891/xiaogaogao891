@@ -109,10 +109,11 @@ def get_trading_calendar(end_date):
     df = pro.trade_cal(exchange='', start_date=start_point, end_date=end_point, is_open='1')
     return sorted(pd.to_datetime(df['cal_date']).dt.date.tolist())
 
+# 【关键修复】这里加大了历史缓冲
 def get_needed_dates(current_date, window_days):
     all_dates = get_trading_calendar(current_date)
     past_dates = [d for d in all_dates if d <= current_date]
-    needed_n = window_days + 2
+    needed_n = window_days + 30   # ←←← 原来是 +2，现在改成 +30
     return past_dates[-needed_n:] if len(past_dates) >= needed_n else past_dates
 
 @st.cache_data(ttl=3600*12)
@@ -163,7 +164,6 @@ with st.spinner(f"正在分析 {needed_dates[-1]} ..."):
 
     df_today = calculate_top_n(needed_dates[-1], market_df, window_days, top_n)
     
-    # 自动找昨天
     yesterday_date = None
     df_yesterday = pd.DataFrame()
     for i in range(2, len(needed_dates) + 1):
@@ -177,7 +177,7 @@ with st.spinner(f"正在分析 {needed_dates[-1]} ..."):
     top_codes = df_today['ts_code'].tolist()
     concept_map = get_concept_combined(top_codes)
 
-# ====================== 6. 界面（最终诊断版） ======================
+# ====================== 6. 界面呈现 ======================
 st.markdown('<h1 class="title">🚀 强势股概念排名动态追踪</h1>', unsafe_allow_html=True)
 
 if not df_today.empty:
@@ -225,11 +225,10 @@ if not df_today.empty:
         
         if y_rank is None:
             trend_label = "🆕 新榜"
-            yesterday_rank_str = "新榜"
+            delta = 0
         else:
             delta = y_rank - today_rank
             trend_label = f"↑ {delta}" if delta > 0 else f"↓ {abs(delta)}" if delta < 0 else "持平"
-            yesterday_rank_str = str(y_rank)
         
         report_list.append({
             "排名": today_rank,
@@ -239,9 +238,7 @@ if not df_today.empty:
             "所属概念": concept_map.get(ts_code, "-"),
             f"{window_days}日涨幅": round(row['pct_chg'], 2),
             "实时价": realtime_map.get(code6, "-"),
-            "昨天排名": yesterday_rank_str,
-            "当前排名": today_rank,
-            "变动值": 0 if y_rank is None else (y_rank - today_rank),
+            "变动值": delta,
             "趋势": trend_label,
         })
     
@@ -277,11 +274,9 @@ if not df_today.empty:
             "所属概念": st.column_config.TextColumn("所属概念", width=220),
             f"{window_days}日涨幅": st.column_config.ProgressColumn("涨幅", format="%.2f%%", min_value=0, max_value=final_df[f"{window_days}日涨幅"].max()),
             "实时价": st.column_config.NumberColumn("实时价", format="%.2f", width=100),
-            "昨天排名": st.column_config.NumberColumn("昨天排名", width=90),
-            "当前排名": st.column_config.NumberColumn("当前排名", width=90),
             "趋势": st.column_config.TextColumn("趋势", width=90)
         },
-        use_container_width=True, height=700, hide_index=True
+        use_container_width=True, height=600, hide_index=True
     )
 
     st.divider()
@@ -291,15 +286,15 @@ if not df_today.empty:
     
     st.download_button("📥 导出分析结果 (CSV)", final_df.to_csv(index=False).encode('utf-8'), f"Rank_{needed_dates[-1]}.csv", "text/csv")
 
-st.caption("注：现在多了「昨天排名」和「当前排名」两列！如果昨天排名和当前排名一样多，就是真正的「持平」。")
+st.caption("注：已加大历史数据缓冲，现在3月23日和24日排名会正常对比")
 
-# 移动端优化
+# ====================== 移动端优化 ======================
 st.markdown(f"""
 <style>
     @media (max-width: 768px) {{
         .stApp {{ zoom: {zoom_level}; }}
         .main .block-container {{ padding-right: 0 !important; padding-left: 0 !important; max-width: 100% !important; }}
-        .stDataFrame table {{ font-size: 15px !important; width: max-content !important; min-width: 1200px !important; }}
+        .stDataFrame table {{ font-size: 15px !important; width: max-content !important; min-width: 980px !important; }}
     }}
 </style>
 """, unsafe_allow_html=True)
