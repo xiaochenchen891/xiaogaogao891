@@ -12,7 +12,6 @@ st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
     .stDataFrame { border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.05); }
-    
     .title {
         background: linear-gradient(90deg, #1e3a8a, #3b82f6);
         -webkit-background-clip: text;
@@ -22,7 +21,6 @@ st.markdown("""
         text-align: center;
         margin-bottom: 0.5rem;
     }
-    
     .metric-card {
         background: white;
         padding: 20px;
@@ -34,24 +32,20 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ====================== 【新增】celue2 的实时股价获取函数 ======================
+# ====================== 【celue2 实时股价函数】 ======================
 def get_ts_code(code):
     code = str(code).zfill(6)
-    if code.startswith('6'):
-        return code + '.SH'
-    elif code.startswith(('0', '3', '8')):
-        return code + '.SZ'
+    if code.startswith('6'): return code + '.SH'
+    elif code.startswith(('0', '3', '8')): return code + '.SZ'
     return code + '.SH'
 
 @st.cache_data(ttl=30)
 def get_real_time_price(code, target_date=None):
-    """完全复用 celue2 的多接口实时价（pro.quote → sina → dc → 1min → 历史兜底）"""
     ts_code = get_ts_code(code)
     token = st.secrets["tushare"]["token"]
     pro = ts.pro_api(token)
     today_str = datetime.date.today().strftime("%Y%m%d")
     is_today = (target_date is None or str(target_date).replace("-", "") == today_str)
-
     interfaces = [
         ("pro.quote", lambda: pro.quote(ts_code=ts_code), 'price'),
         ("rt_k", lambda: pro.rt_k(ts_code=ts_code), 'close'),
@@ -59,17 +53,14 @@ def get_real_time_price(code, target_date=None):
         ("realtime_dc", lambda: ts.realtime_quote(ts_code=ts_code, src='dc'), 'PRICE'),
         ("1min", lambda: pro.min(ts_code=ts_code, freq='1min', start_date=today_str, end_date=today_str), 'close'),
     ]
-    
-    for name, func, col in interfaces:
+    for _, func, col in interfaces:
         try:
             df = func()
             if df is not None and not df.empty:
                 price = float(df.iloc[-1][col])
-                if price > 0:
-                    return round(price, 2)
+                if price > 0: return round(price, 2)
         except:
             continue
-    # 历史兜底
     try:
         df = pro.daily(ts_code=ts_code, trade_date=today_str if is_today else str(target_date).replace("-", ""), fields='close')
         return round(float(df['close'].iloc[0]), 2) if not df.empty else None
@@ -77,20 +68,17 @@ def get_real_time_price(code, target_date=None):
         return None
 
 def batch_get_realtime_prices(codes):
-    """批量获取（更快）"""
     prices = {}
     for code in codes:
         p = get_real_time_price(code)
-        if p:
-            prices[code] = p
+        if p: prices[code] = p
     return prices
-# ====================== 【实时股价函数结束】 ======================
 
 # ====================== 2. 初始化 Session State ======================
 if "current_date" not in st.session_state:
     st.session_state.current_date = datetime.date.today()
 
-# ====================== 3. 数据核心函数（保持原样） ======================
+# ====================== 3. 数据核心函数 ======================
 @st.cache_data(ttl=3600*24)
 def get_stock_info():
     try:
@@ -111,16 +99,14 @@ def get_concept_combined(ts_code_list):
             df = pro.concept_detail(ts_code=code, fields='concept_name')
             if not df.empty:
                 concept_map[code].extend(df['concept_name'].tolist()[:4])
-    except:
-        pass
+    except: pass
     for code in ts_code_list:
         if not concept_map[code]:
             try:
                 df = pro.index_member(ts_code=code, fields='index_name')
                 if not df.empty:
                     concept_map[code].extend(df['index_name'].str.replace('指数','').tolist()[:2])
-            except:
-                pass
+            except: pass
     for code in ts_code_list:
         if not concept_map[code]:
             try:
@@ -201,9 +187,8 @@ with st.spinner(f"正在分析 {needed_dates[-1]} 的概念与排名数据..."):
 st.markdown('<h1 class="title">🚀 强势股概念排名动态追踪</h1>', unsafe_allow_html=True)
 
 if not df_today.empty:
-    # ---------- Top 指标卡片 ----------
     y_rank_map = {row['ts_code']: row['排名'] for _, row in df_yesterday.iterrows()} if not df_yesterday.empty else {}
-    
+
     col_a, col_b, col_c, col_d = st.columns(4)
     with col_a:
         top1 = df_today.iloc[0]
@@ -213,7 +198,6 @@ if not df_today.empty:
     with col_c: st.metric("新晋上榜", sum(1 for c in df_today['ts_code'] if c not in y_rank_map))
     with col_d: st.metric("排名上升", sum(1 for _, r in df_today.iterrows() if y_rank_map.get(r['ts_code'], 999) > r['排名']))
 
-    # ---------- 日期导航 ----------
     st.markdown("---")
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1:
@@ -229,7 +213,7 @@ if not df_today.empty:
             st.session_state.current_date = future_dates[0]
             st.rerun()
 
-    # ========== 【新增】批量获取实时价 ==========
+    # ========== 实时价 + 修复“全部持平” ==========
     top_codes_6 = [code[:6] for code in df_today['ts_code'].tolist()]
     realtime_map = {}
     if st.session_state.current_date == datetime.date.today():
@@ -239,7 +223,6 @@ if not df_today.empty:
         for _, row in df_today.iterrows():
             realtime_map[row['ts_code'][:6]] = round(row['close_end'], 2)
 
-    # ---------- 数据整理 ----------
     report_list = []
     for _, row in df_today.iterrows():
         ts_code = row['ts_code']
@@ -247,8 +230,14 @@ if not df_today.empty:
         info = stock_info_map.get(ts_code, {'name':'未知','industry':'其他'})
         today_rank = int(row['排名'])
         y_rank = y_rank_map.get(ts_code)
-        delta = y_rank - today_rank if y_rank else 0
-        trend_label = f"↑ {delta}" if delta > 0 else f"↓ {abs(delta)}" if delta < 0 else ("🆕 新榜" if not y_rank else "持平")
+        
+        if y_rank is None:
+            trend_label = "🆕 新榜"      # ← 修复：明确显示新榜
+            delta = 0
+        else:
+            delta = y_rank - today_rank
+            trend_label = f"↑ {delta}" if delta > 0 else f"↓ {abs(delta)}" if delta < 0 else "持平"
+        
         current_price = realtime_map.get(code6, "-")
         
         report_list.append({
@@ -281,7 +270,6 @@ if not df_today.empty:
             return styles
         return df.style.apply(highlight_trend, axis=1)
 
-    # ---------- 表格与搜索 ----------
     search = st.text_input("🔍 搜索关键词 (股票、概念或行业)", "")
     display_df = final_df[final_df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)] if search else final_df
 
@@ -294,16 +282,13 @@ if not df_today.empty:
             "名称": st.column_config.TextColumn("名称", width=130),
             "所属行业": st.column_config.TextColumn("行业", width=90),
             "所属概念": st.column_config.TextColumn("所属概念", width=220),
-            f"{window_days}日涨幅": st.column_config.ProgressColumn(
-                "涨幅", format="%.2f%%", min_value=0, max_value=final_df[f"{window_days}日涨幅"].max()
-            ),
-            "实时价": st.column_config.NumberColumn("实时价", format="%.2f", width=100),  # ← 新增列
+            f"{window_days}日涨幅": st.column_config.ProgressColumn("涨幅", format="%.2f%%", min_value=0, max_value=final_df[f"{window_days}日涨幅"].max()),
+            "实时价": st.column_config.NumberColumn("实时价", format="%.2f", width=100),
             "趋势": st.column_config.TextColumn("趋势", width=80)
         },
         use_container_width=True, height=600, hide_index=True
     )
 
-    # ---------- 行业分布 ----------
     st.divider()
     st.subheader("🏭 强势股行业热度分布")
     industry_count = final_df['所属行业'].value_counts()
@@ -311,7 +296,7 @@ if not df_today.empty:
     
     st.download_button("📥 导出分析结果 (CSV)", final_df.to_csv(index=False).encode('utf-8'), f"Rank_{needed_dates[-1]}.csv", "text/csv")
 
-st.caption("注：概念获取顺序：Tushare概念库 > 指数成员标签 > 公司主营业务关键字。实时价使用 celue2 多接口机制（当天实时刷新）")
+st.caption("注：概念获取顺序：Tushare概念库 > 指数成员标签 > 公司主营业务关键字。实时价使用 celue2 多接口机制")
 
 # ====================== 移动端优化 CSS ======================
 st.markdown(f"""
