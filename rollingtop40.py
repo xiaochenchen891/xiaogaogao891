@@ -136,6 +136,11 @@ def calculate_top_n(target_date, full_df, window_days, top_n):
 # ====================== 4. 侧边栏 ======================
 with st.sidebar:
     st.header("⚙️ 控制面板")
+    
+    st.divider()
+    zoom_level = st.slider("🔍 界面缩放（手机推荐）", 0.7, 1.5, 1.0, 0.05)
+    st.caption("左右滑动即可放大/缩小整个界面")
+    
     window_days = st.number_input("统计周期 (天)", 5, 60, 10)
     top_n = st.number_input("显示数量", 10, 100, 40)
    
@@ -209,7 +214,8 @@ if not df_today.empty:
         
         report_list.append({
             "排名": today_rank,
-            "股票": f"{ts_code[:6]} {info['name']}",
+            "代码": ts_code[:6],
+            "名称": info['name'],
             "所属行业": info['industry'],
             "所属概念": concept_map.get(ts_code, "-"), # 新增列
             f"{window_days}日涨幅": round(row['pct_chg'], 2),
@@ -246,13 +252,16 @@ if not df_today.empty:
     st.dataframe(
         apply_style(display_df),
         column_config={
-            "变动值": None, # 隐藏计算辅助列
-            "排名": st.column_config.NumberColumn("排名", width=60),
-            "股票": st.column_config.TextColumn("股票", width=180),
-            "所属行业": st.column_config.TextColumn("行业", width=100),
-            "所属概念": st.column_config.TextColumn("所属概念 (降级获取)", width=350),
-            f"{window_days}日涨幅": st.column_config.ProgressColumn("涨幅", format="%.2f%%", min_value=0, max_value=final_df[f"{window_days}日涨幅"].max()),
-            "趋势": st.column_config.TextColumn("排名趋势", width=100)
+            "变动值": None,  # 隐藏辅助列
+            "排名": st.column_config.NumberColumn("排名", width=50),
+            "代码": st.column_config.TextColumn("代码", width=70),
+            "名称": st.column_config.TextColumn("名称", width=130),
+            "所属行业": st.column_config.TextColumn("行业", width=90),
+            "所属概念": st.column_config.TextColumn("所属概念", width=220),
+            f"{window_days}日涨幅": st.column_config.ProgressColumn(
+                "涨幅", format="%.2f%%", min_value=0, max_value=final_df[f"{window_days}日涨幅"].max()
+            ),
+            "趋势": st.column_config.TextColumn("趋势", width=80)
         },
         use_container_width=True, height=600, hide_index=True
     )
@@ -267,3 +276,20 @@ if not df_today.empty:
     st.download_button("📥 导出分析结果 (CSV)", final_df.to_csv(index=False).encode('utf-8'), f"Rank_{needed_dates[-1]}.csv", "text/csv")
 
 st.caption("注：概念获取顺序：Tushare概念库 > 指数成员标签 > 公司主营业务关键字。")
+
+# ====================== 移动端缩放 CSS ======================
+st.markdown(f"""
+<style>
+    @media (max-width: 768px) {{
+        .stApp {{
+            zoom: {zoom_level};
+        }}
+        .stDataFrame table {{
+            font-size: 15px !important;
+        }}
+        .stDataFrame {{
+            overflow-x: auto;
+        }}
+    }}
+</style>
+""", unsafe_allow_html=True)
