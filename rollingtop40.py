@@ -115,24 +115,38 @@ if len(needed_dates) < st.session_state.window_days + 1:
     st.warning("所选日期的历史数据不足。")
     st.stop()
 
-with st.spinner(f"正在分析 {needed_dates[-1]} ..."):
+with st.spinner(f"正在分析 {st.session_state.current_date} ..."):
     all_snaps = [fetch_daily_snapshot(d) for d in needed_dates if not fetch_daily_snapshot(d).empty]
-    market_df = pd.concat(all_snaps, ignore_index=True)
+    market_df = pd.concat(all_snaps, ignore_index=True) if all_snaps else pd.DataFrame()
     market_df['trade_date'] = pd.to_datetime(market_df['trade_date'])
 
-    df_today = calculate_top_n(needed_dates[-1], market_df, st.session_state.window_days, st.session_state.top_n)
+    # ================ 新增：关键修复 ================
+    if market_df.empty:
+        st.error("无法获取任何交易数据，请稍后重试")
+        st.stop()
 
-    # 自动找昨天
+    # 真正有数据的最新日期（这就是今天数据还没回来时要用的日期）
+    effective_date = pd.to_datetime(market_df['trade_date']).dt.date.max()
+
+    # 如果用户选的日期比实际数据新，就提示并使用实际日期
+    if st.session_state.current_date > effective_date:
+        st.warning(f"⚠️ {st.session_state.current_date} 数据尚未返回，实际使用最新可用日期 **{effective_date}** 计算排名")
+
+    # 用 effective_date 计算今天的排名
+    df_today = calculate_top_n(effective_date, market_df, st.session_state.window_days, st.session_state.top_n)
+
+    # ================ 新增：更准确的“昨天”查找 ================
+    # 从 market_df 里所有可用日期里找出 effective_date 的前一个交易日
+    available_dates = sorted(market_df['trade_date'].dt.date.unique())
     yesterday_date = None
     df_yesterday = pd.DataFrame()
-    for i in range(2, len(needed_dates) + 1):
-        test_date = needed_dates[-i]
-        df_test = calculate_top_n(test_date, market_df, st.session_state.window_days, st.session_state.top_n)
-        if not df_test.empty:
-            yesterday_date = test_date
-            df_yesterday = df_test
-            break
-
+    
+    idx = available_dates.index(effective_date) if effective_date in available_dates else -1
+    if idx > 0:
+        yesterday_date = available_dates[idx - 1]
+        df_yesterday = calculate_top_n(yesterday_date, market_df, st.session_state.window_days, st.session_state.top_n)
+    # ================================================
+    
     top_codes = df_today['ts_code'].tolist()
     concept_map = get_concept_combined(top_codes)
 
@@ -162,7 +176,7 @@ if not df_today.empty:
             st.session_state.current_date = needed_dates[-2]
             st.rerun()
     with c2:
-        st.subheader(f"📅 **数据日期：{needed_dates[-1]}**")
+        st.subheader(f"📅 **数据日期：{effective_date}**")
         st.caption(f"昨天对比日期：**{yesterday_date or '暂无'}** | 昨天数据：**{'✅ 成功' if not df_yesterday.empty else '❌ 暂缺'}**")
     with c3:
         full_cal = get_trading_calendar(st.session_state.current_date)
