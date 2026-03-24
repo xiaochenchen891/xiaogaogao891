@@ -5,34 +5,19 @@ from datetime import timedelta
 import tushare as ts
 import numpy as np
 
-# ====================== 1. 页面配置与超级美化 CSS ======================
+# ====================== 1. 页面配置与美化 ======================
 st.set_page_config(layout="wide", page_title="强势股排名动态追踪", page_icon="🚀")
 pro = ts.pro_api(st.secrets["tushare"]["token"])
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
     .stDataFrame { border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.05); }
-    .title {
-        background: linear-gradient(90deg, #1e3a8a, #3b82f6);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-size: 2.8rem;
-        font-weight: 700;
-        text-align: center;
-        margin-bottom: 0.5rem;
-    }
-    .metric-card {
-        background: white;
-        padding: 20px;
-        border-radius: 16px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.06);
-        border: 1px solid #f0f0f0;
-        text-align: center;
-    }
+    .title { background: linear-gradient(90deg, #1e3a8a, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 2.8rem; font-weight: 700; text-align: center; margin-bottom: 0.5rem; }
+    .metric-card { background: white; padding: 20px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #f0f0f0; text-align: center; }
     </style>
 """, unsafe_allow_html=True)
 
-# ====================== 【celue2 实时股价函数】 ======================
+# ====================== 2. celue2 实时股价函数 ======================
 def get_ts_code(code):
     code = str(code).zfill(6)
     if code.startswith('6'): return code + '.SH'
@@ -59,8 +44,7 @@ def get_real_time_price(code, target_date=None):
             if df is not None and not df.empty:
                 price = float(df.iloc[-1][col])
                 if price > 0: return round(price, 2)
-        except:
-            continue
+        except: continue
     try:
         df = pro.daily(ts_code=ts_code, trade_date=today_str if is_today else str(target_date).replace("-", ""), fields='close')
         return round(float(df['close'].iloc[0]), 2) if not df.empty else None
@@ -74,11 +58,10 @@ def batch_get_realtime_prices(codes):
         if p: prices[code] = p
     return prices
 
-# ====================== 2. 初始化 Session State ======================
+# ====================== 3. Session State & 核心函数 ======================
 if "current_date" not in st.session_state:
     st.session_state.current_date = datetime.date.today()
 
-# ====================== 3. 数据核心函数 ======================
 @st.cache_data(ttl=3600*24)
 def get_stock_info():
     try:
@@ -165,6 +148,7 @@ with st.sidebar:
         st.session_state.current_date = picked_date
         st.rerun()
 
+# ====================== 5. 主逻辑（关键修复在这里） ======================
 stock_info_map = get_stock_info()
 needed_dates = get_needed_dates(st.session_state.current_date, window_days)
 
@@ -178,8 +162,18 @@ with st.spinner(f"正在分析 {needed_dates[-1]} 的概念与排名数据..."):
     market_df['trade_date'] = pd.to_datetime(market_df['trade_date'])
 
     df_today = calculate_top_n(needed_dates[-1], market_df, window_days, top_n)
-    df_yesterday = calculate_top_n(needed_dates[-2], market_df, window_days, top_n)
     
+    # 【核心修复】自动寻找有效昨天日期
+    yesterday_date = None
+    df_yesterday = pd.DataFrame()
+    for i in range(2, len(needed_dates) + 1):
+        test_date = needed_dates[-i]
+        df_test = calculate_top_n(test_date, market_df, window_days, top_n)
+        if not df_test.empty:
+            yesterday_date = test_date
+            df_yesterday = df_test
+            break
+
     top_codes = df_today['ts_code'].tolist()
     concept_map = get_concept_combined(top_codes)
 
@@ -189,6 +183,7 @@ st.markdown('<h1 class="title">🚀 强势股概念排名动态追踪</h1>', uns
 if not df_today.empty:
     y_rank_map = {row['ts_code']: row['排名'] for _, row in df_yesterday.iterrows()} if not df_yesterday.empty else {}
 
+    # 指标卡片
     col_a, col_b, col_c, col_d = st.columns(4)
     with col_a:
         top1 = df_today.iloc[0]
@@ -198,6 +193,7 @@ if not df_today.empty:
     with col_c: st.metric("新晋上榜", sum(1 for c in df_today['ts_code'] if c not in y_rank_map))
     with col_d: st.metric("排名上升", sum(1 for _, r in df_today.iterrows() if y_rank_map.get(r['ts_code'], 999) > r['排名']))
 
+    # 日期导航 + 调试信息
     st.markdown("---")
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1:
@@ -206,6 +202,7 @@ if not df_today.empty:
             st.rerun()
     with c2:
         st.subheader(f"📅 **数据日期：{needed_dates[-1]}**")
+        st.caption(f"昨天对比日期：**{yesterday_date or '暂无'}** | 昨天数据：**{'✅ 成功' if not df_yesterday.empty else '❌ 暂缺（已标记新榜）'}**")
     with c3:
         full_cal = get_trading_calendar(st.session_state.current_date)
         future_dates = [d for d in full_cal if d > needed_dates[-1]]
@@ -213,7 +210,7 @@ if not df_today.empty:
             st.session_state.current_date = future_dates[0]
             st.rerun()
 
-    # ========== 实时价 + 修复“全部持平” ==========
+    # 实时价 + 趋势列
     top_codes_6 = [code[:6] for code in df_today['ts_code'].tolist()]
     realtime_map = {}
     if st.session_state.current_date == datetime.date.today():
@@ -232,7 +229,7 @@ if not df_today.empty:
         y_rank = y_rank_map.get(ts_code)
         
         if y_rank is None:
-            trend_label = "🆕 新榜"      # ← 修复：明确显示新榜
+            trend_label = "🆕 新榜（昨日数据暂缺）"
             delta = 0
         else:
             delta = y_rank - today_rank
@@ -284,7 +281,7 @@ if not df_today.empty:
             "所属概念": st.column_config.TextColumn("所属概念", width=220),
             f"{window_days}日涨幅": st.column_config.ProgressColumn("涨幅", format="%.2f%%", min_value=0, max_value=final_df[f"{window_days}日涨幅"].max()),
             "实时价": st.column_config.NumberColumn("实时价", format="%.2f", width=100),
-            "趋势": st.column_config.TextColumn("趋势", width=80)
+            "趋势": st.column_config.TextColumn("趋势", width=90)
         },
         use_container_width=True, height=600, hide_index=True
     )
@@ -298,7 +295,7 @@ if not df_today.empty:
 
 st.caption("注：概念获取顺序：Tushare概念库 > 指数成员标签 > 公司主营业务关键字。实时价使用 celue2 多接口机制")
 
-# ====================== 移动端优化 CSS ======================
+# ====================== 移动端优化 ======================
 st.markdown(f"""
 <style>
     @media (max-width: 768px) {{
