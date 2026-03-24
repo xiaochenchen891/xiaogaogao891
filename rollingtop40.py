@@ -17,48 +17,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ====================== 2. 实时股价函数（保留，但只用于非今天） ======================
-def get_ts_code(code):
-    code = str(code).zfill(6)
-    if code.startswith('6'): return code + '.SH'
-    elif code.startswith(('0', '3', '8')): return code + '.SZ'
-    return code + '.SH'
-
-@st.cache_data(ttl=30)
-def get_real_time_price(code, target_date=None):
-    ts_code = get_ts_code(code)
-    token = st.secrets["tushare"]["token"]
-    pro = ts.pro_api(token)
-    today_str = datetime.date.today().strftime("%Y%m%d")
-    is_today = (target_date is None or str(target_date).replace("-", "") == today_str)
-    interfaces = [
-        ("pro.quote", lambda: pro.quote(ts_code=ts_code), 'price'),
-        ("rt_k", lambda: pro.rt_k(ts_code=ts_code), 'close'),
-        ("realtime_sina", lambda: ts.realtime_quote(ts_code=ts_code, src='sina'), 'PRICE'),
-        ("realtime_dc", lambda: ts.realtime_quote(ts_code=ts_code, src='dc'), 'PRICE'),
-        ("1min", lambda: pro.min(ts_code=ts_code, freq='1min', start_date=today_str, end_date=today_str), 'close'),
-    ]
-    for _, func, col in interfaces:
-        try:
-            df = func()
-            if df is not None and not df.empty:
-                price = float(df.iloc[-1][col])
-                if price > 0: return round(price, 2)
-        except: continue
-    try:
-        df = pro.daily(ts_code=ts_code, trade_date=today_str if is_today else str(target_date).replace("-", ""), fields='close')
-        return round(float(df['close'].iloc[0]), 2) if not df.empty else None
-    except:
-        return None
-
-def batch_get_realtime_prices(codes):
-    prices = {}
-    for code in codes:
-        p = get_real_time_price(code)
-        if p: prices[code] = p
-    return prices
-
-# ====================== 3. Session State & 核心函数 ======================
+# ====================== 2. Session State & 核心函数 ======================
 if "current_date" not in st.session_state:
     st.session_state.current_date = datetime.date.today()
 
@@ -112,7 +71,7 @@ def get_trading_calendar(end_date):
 def get_needed_dates(current_date, window_days):
     all_dates = get_trading_calendar(current_date)
     past_dates = [d for d in all_dates if d <= current_date]
-    needed_n = window_days + 30          # 加大缓冲，保证昨天有足够数据
+    needed_n = window_days + 30   # 加大缓冲，保证昨天有足够数据
     return past_dates[-needed_n:] if len(past_dates) >= needed_n else past_dates
 
 @st.cache_data(ttl=3600*12)
@@ -212,9 +171,8 @@ if not df_today.empty:
             st.session_state.current_date = future_dates[0]
             st.rerun()
 
-    # 实时价（收盘后使用当天收盘价）
-    top_codes_6 = [code[:6] for code in df_today['ts_code'].tolist()]
-    realtime_map = {code[:6]: round(row['close_end'], 2) for _, row in df_today.iterrows()}
+    # 收盘价（已经收盘，就用历史收盘价）
+    realtime_map = {row['ts_code'][:6]: round(row['close_end'], 2) for _, row in df_today.iterrows()}
 
     report_list = []
     for _, row in df_today.iterrows():
@@ -287,7 +245,7 @@ if not df_today.empty:
     
     st.download_button("📥 导出分析结果 (CSV)", final_df.to_csv(index=False).encode('utf-8'), f"Rank_{needed_dates[-1]}.csv", "text/csv")
 
-st.caption("注：已切换为纯收盘价模式（收盘后使用历史数据计算排名）。")
+st.caption("注：已切换为纯收盘价模式（收盘后使用历史数据计算排名），排名对比正常。")
 
 # ====================== 移动端优化 ======================
 st.markdown(f"""
