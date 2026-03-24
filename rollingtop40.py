@@ -71,7 +71,7 @@ def get_trading_calendar(end_date):
 def get_needed_dates(current_date, window_days):
     all_dates = get_trading_calendar(current_date)
     past_dates = [d for d in all_dates if d <= current_date]
-    needed_n = window_days + 30   # 加大缓冲，保证昨天有足够数据
+    needed_n = window_days + 30
     return past_dates[-needed_n:] if len(past_dates) >= needed_n else past_dates
 
 @st.cache_data(ttl=3600*12)
@@ -120,33 +120,24 @@ with st.spinner(f"正在分析 {st.session_state.current_date} ..."):
     market_df = pd.concat(all_snaps, ignore_index=True) if all_snaps else pd.DataFrame()
     market_df['trade_date'] = pd.to_datetime(market_df['trade_date'])
 
-    # ================ 新增：关键修复 ================
     if market_df.empty:
         st.error("无法获取任何交易数据，请稍后重试")
         st.stop()
 
-    # 真正有数据的最新日期（这就是今天数据还没回来时要用的日期）
     effective_date = pd.to_datetime(market_df['trade_date']).dt.date.max()
-
-    # 如果用户选的日期比实际数据新，就提示并使用实际日期
     if st.session_state.current_date > effective_date:
         st.warning(f"⚠️ {st.session_state.current_date} 数据尚未返回，实际使用最新可用日期 **{effective_date}** 计算排名")
 
-    # 用 effective_date 计算今天的排名
     df_today = calculate_top_n(effective_date, market_df, st.session_state.window_days, st.session_state.top_n)
 
-    # ================ 新增：更准确的“昨天”查找 ================
-    # 从 market_df 里所有可用日期里找出 effective_date 的前一个交易日
-    available_dates = sorted(market_df['trade_date'].dt.date.unique())
     yesterday_date = None
     df_yesterday = pd.DataFrame()
-    
+    available_dates = sorted(market_df['trade_date'].dt.date.unique())
     idx = available_dates.index(effective_date) if effective_date in available_dates else -1
     if idx > 0:
         yesterday_date = available_dates[idx - 1]
         df_yesterday = calculate_top_n(yesterday_date, market_df, st.session_state.window_days, st.session_state.top_n)
-    # ================================================
-    
+
     top_codes = df_today['ts_code'].tolist()
     concept_map = get_concept_combined(top_codes)
 
@@ -164,7 +155,14 @@ if not df_today.empty:
     with col_a:
         top1 = df_today.iloc[0]
         info1 = stock_info_map.get(top1['ts_code'], {})
-        st.markdown(f'<div class="metric-card"><h4>🏆 榜首龙头</h4><h3>{info1.get("name","-")}</h3><p style="color:#1e3a8a; font-size:1.8rem; margin:0;">+{top1["pct_chg"]:.2f}%</p></div>', unsafe_allow_html=True)
+        st.markdown(f'''
+            <div class="metric-card">
+                <h4>🏆 榜首龙头</h4>
+                <h3 style="color:#1e3a8a; margin:8px 0;">{info1.get("name","-")}</h3>
+                <p style="color:#22c55e; font-size:1.8rem; margin:0;">+{top1["pct_chg"]:.2f}%</p>
+            </div>
+        ''', unsafe_allow_html=True)
+
     with col_b: st.metric(f"Top{st.session_state.top_n} 均幅", f"{df_today['pct_chg'].mean():.2f}%")
     with col_c: st.metric("新晋上榜", sum(1 for c in df_today['ts_code'] if c[:6] not in y_rank_map))
     with col_d: st.metric("排名上升", sum(1 for _, r in df_today.iterrows() if y_rank_map.get(r['ts_code'][:6], 999) > r['排名']))
@@ -185,7 +183,6 @@ if not df_today.empty:
             st.session_state.current_date = future_dates[0]
             st.rerun()
 
-    # 收盘价（已经收盘，就用历史收盘价）
     realtime_map = {row['ts_code'][:6]: round(row['close_end'], 2) for _, row in df_today.iterrows()}
 
     report_list = []
@@ -259,7 +256,7 @@ if not df_today.empty:
     
     st.download_button("📥 导出分析结果 (CSV)", final_df.to_csv(index=False).encode('utf-8'), f"Rank_{needed_dates[-1]}.csv", "text/csv")
 
-st.caption("注：已切换为纯收盘价模式（收盘后使用历史数据计算排名），排名对比正常。")
+st.caption("注：已切换为纯收盘价模式，榜首龙头名称已改为深色")
 
 # ====================== 移动端优化 ======================
 st.markdown(f"""
