@@ -277,18 +277,48 @@ if not df_today.empty:
 
 st.caption("注：概念获取顺序：Tushare概念库 > 指数成员标签 > 公司主营业务关键字。")
 
-# ====================== 移动端缩放 CSS ======================
+# ====================== 移动端优化 CSS（解决右侧边框 + 完整展示） ======================
 st.markdown(f"""
 <style>
     @media (max-width: 768px) {{
         .stApp {{
             zoom: {zoom_level};
         }}
+        
+        /* 核心修复：强制 dataframe 全宽 + 横向滚动 */
+        [data-testid="stDataFrame"], .stDataFrame {{
+            width: 100% !important;
+            max-width: 100vw !important;
+            overflow-x: auto !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: none !important;
+        }}
+        
+        .stDataFrame > div {{
+            width: 100% !important;
+        }}
+        
         .stDataFrame table {{
             font-size: 15px !important;
+            width: max-content !important;
+            min-width: 950px !important;   /* 强制表格够宽，触发滚动 */
+            white-space: nowrap !important;
         }}
-        .stDataFrame {{
-            overflow-x: auto;
+        
+        .stDataFrame td, .stDataFrame th {{
+            padding: 8px 6px !important;
+            white-space: nowrap !important;
+        }}
+        
+        /* 滚动条更明显 */
+        .stDataFrame::-webkit-scrollbar {{
+            height: 10px !important;
+            background: #f1f1f1;
+        }}
+        .stDataFrame::-webkit-scrollbar-thumb {{
+            background: #3b82f6;
+            border-radius: 10px;
         }}
     }}
 </style>
