@@ -24,56 +24,55 @@ if "current_date" not in st.session_state:
 TOKEN = st.secrets["tushare"]["token"]
 pro = ts.pro_api(TOKEN)
 
-# ====================== 【升级版】实时价格核心函数 ======================
+# ====================== 【2026最新加强版】实时价格核心函数 ======================
 @st.cache_data(ttl=30, show_spinner=False)
 def get_real_time_price(ts_code):
-    """2026 加强版：5个接口依次尝试"""
+    """5接口全覆盖 + 详细调试"""
     try:
         pro = ts.pro_api(TOKEN)
-        now = datetime.datetime.now()
-        today_str = now.strftime("%Y%m%d")
-        
         interfaces = [
-            ("rt_k", lambda: pro.rt_k(ts_code=ts_code), 'close'),
+            ("pro.rt_k", lambda: pro.rt_k(ts_code=ts_code), 'close'),
             ("sina", lambda: ts.realtime_quote(ts_code=ts_code, src='sina'), 'price'),
             ("dc",   lambda: ts.realtime_quote(ts_code=ts_code, src='dc'), 'price'),
             ("quote", lambda: pro.quote(ts_code=ts_code), 'price'),
-            ("1min", lambda: pro.min(ts_code=ts_code, freq='1min', start_date=today_str, end_date=today_str), 'close'),
+            ("1min", lambda: pro.min(ts_code=ts_code, freq='1min', start_date=datetime.datetime.now().strftime("%Y%m%d"), end_date=datetime.datetime.now().strftime("%Y%m%d")), 'close'),
         ]
-        
         for name, func, col in interfaces:
             try:
                 df = func()
                 if df is not None and not df.empty and col in df.columns:
                     price = float(df[col].iloc[-1])
                     if price > 0:
+                        if debug_mode: st.success(f"✅ {ts_code} 通过 {name} 拿到实时价 {price}")
                         return round(price, 2)
             except:
+                if debug_mode: st.write(f"   ❌ {name} 失败")
                 continue
-    except:
-        pass
-    
-    # 最终兜底
+    except Exception as e:
+        if debug_mode: st.error(f"整体异常: {str(e)[:80]}")
+    if debug_mode: st.warning(f"⚠️ {ts_code} 所有接口失败 → 用历史收盘")
     return None
 
 @st.cache_data(ttl=30, show_spinner=False)
-def batch_get_realtime_prices(ts_code_list, batch_size=150):
-    """升级批量版：一次性拉取（大幅提高成功率）"""
+def batch_get_realtime_prices(ts_code_list):
+    """真批量版（一次性拉取）"""
     prices = {}
-    codes = [c[:6] for c in ts_code_list]  # 确保是6位代码
+    codes = [c[:6] for c in ts_code_list if c]
+    batch_size = 120
     for i in range(0, len(codes), batch_size):
         batch = codes[i:i+batch_size]
-        batch_str = ','.join(batch)
         try:
-            df = ts.realtime_quote(ts_code=batch_str, src='sina')
+            df = ts.realtime_quote(ts_code=','.join(batch), src='sina')
             if not df.empty:
                 for _, row in df.iterrows():
                     code6 = str(row.get('TS_CODE') or row.get('ts_code', ''))[:6]
-                    price = float(row.get('PRICE') or row.get('price', 0))
-                    if price > 0:
-                        prices[code6] = round(price, 2)
+                    p = float(row.get('PRICE') or row.get('price', 0))
+                    if p > 0:
+                        prices[code6] = round(p, 2)
         except:
             pass
+    if debug_mode:
+        st.info(f"✅ 批量实时价格获取成功 {len(prices)} 只")
     return prices
 
 # ====================== 其他原有函数（保持不变） ======================
