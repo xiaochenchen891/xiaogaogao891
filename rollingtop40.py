@@ -24,40 +24,56 @@ if "current_date" not in st.session_state:
 TOKEN = st.secrets["tushare"]["token"]
 pro = ts.pro_api(TOKEN)
 
-# ====================== 【新增】实时价格核心函数（已优化） ======================
-@st.cache_data(ttl=60, show_spinner=False)
+# ====================== 【升级版】实时价格核心函数 ======================
+@st.cache_data(ttl=30, show_spinner=False)
 def get_real_time_price(ts_code):
-    """优先使用最稳定的 pro.quote，失败后 fallback 到 realtime_quote"""
+    """2026 加强版：5个接口依次尝试"""
     try:
-        # 最高优先级：官方最稳的 quote 接口
-        df = pro.quote(ts_code=ts_code)
-        if not df.empty and 'price' in df.columns:
-            price = float(df['price'].iloc[0])
-            if price > 0:
-                return round(price, 2)
+        pro = ts.pro_api(TOKEN)
+        now = datetime.datetime.now()
+        today_str = now.strftime("%Y%m%d")
+        
+        interfaces = [
+            ("rt_k", lambda: pro.rt_k(ts_code=ts_code), 'close'),
+            ("sina", lambda: ts.realtime_quote(ts_code=ts_code, src='sina'), 'price'),
+            ("dc",   lambda: ts.realtime_quote(ts_code=ts_code, src='dc'), 'price'),
+            ("quote", lambda: pro.quote(ts_code=ts_code), 'price'),
+            ("1min", lambda: pro.min(ts_code=ts_code, freq='1min', start_date=today_str, end_date=today_str), 'close'),
+        ]
+        
+        for name, func, col in interfaces:
+            try:
+                df = func()
+                if df is not None and not df.empty and col in df.columns:
+                    price = float(df[col].iloc[-1])
+                    if price > 0:
+                        return round(price, 2)
+            except:
+                continue
     except:
         pass
+    
+    # 最终兜底
+    return None
 
-    # 兜底：爬虫实时报价（新浪源）
-    try:
-        df = ts.realtime_quote(ts_code=ts_code, src='sina')
-        if not df.empty:
-            price = float(df.get('PRICE', df.get('price', 0)).iloc[0])
-            if price > 0:
-                return round(price, 2)
-    except:
-        pass
-
-    return None  # 实时失败返回 None，后续会 fallback 到历史收盘价
-
-@st.cache_data(ttl=60, show_spinner=False)
-def batch_get_realtime_prices(ts_code_list):
-    """批量获取实时价格（效率更高）"""
+@st.cache_data(ttl=30, show_spinner=False)
+def batch_get_realtime_prices(ts_code_list, batch_size=150):
+    """升级批量版：一次性拉取（大幅提高成功率）"""
     prices = {}
-    for ts_code in ts_code_list:
-        price = get_real_time_price(ts_code)
-        if price is not None:
-            prices[ts_code[:6]] = price
+    codes = [c[:6] for c in ts_code_list]  # 确保是6位代码
+    for i in range(0, len(codes), batch_size):
+        batch = codes[i:i+batch_size]
+        batch_str = ','.join(batch)
+        try:
+            df = ts.realtime_quote(ts_code=batch_str, src='sina')
+            if not df.empty:
+                for _, row in df.iterrows():
+                    code6 = str(row.get('TS_CODE') or row.get('ts_code', ''))[:6]
+                    price = float(row.get('PRICE') or row.get('price', 0))
+                    if price > 0:
+                        prices[code6] = round(price, 2)
+        except:
+            pass
     return prices
 
 # ====================== 其他原有函数（保持不变） ======================
