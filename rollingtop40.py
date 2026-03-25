@@ -86,7 +86,7 @@ def batch_get_realtime_prices(ts_code_list):
                         prices[code6] = round(p, 2)
         except Exception as e:   # 加强捕获
             if st.session_state.get("debug_mode", False):
-                st.write(f"   ❌ 批量异常: {type(e).__name__} - {str(e)[:100]}")
+                st.error(f"   ❌ 批量异常: {type(e).__name__} - {str(e)[:100]}")   # 改成红色错误提示
             continue   # 继续下一批
     
     if st.session_state.get("debug_mode", False):
@@ -185,7 +185,7 @@ with st.sidebar:
         st.session_state.current_date = picked_date
         st.rerun()
 
-# ====================== 4. 主逻辑 ======================
+# ====================== 4. 主逻辑（已修复版） ======================
 stock_info_map = get_stock_info()
 needed_dates = get_needed_dates(st.session_state.current_date, st.session_state.window_days)
 
@@ -201,18 +201,29 @@ with st.spinner(f"正在分析 {st.session_state.current_date} ..."):
     effective_date = pd.to_datetime(market_df['trade_date']).dt.date.max()
     is_today = (effective_date == datetime.date.today())
 
+    # 【核心修复1】强制使用用户选择的日期，即使 Tushare 日线还没更新也行
     if st.session_state.current_date > effective_date:
-        st.warning(f"⚠️ {st.session_state.current_date} 数据尚未返回，实际使用最新可用日期 **{effective_date}** 计算排名")
+        effective_date = st.session_state.current_date
+        st.warning(f"⚠️ {st.session_state.current_date} 日线暂未更新 → 启用纯实时价模式")
 
     df_today = calculate_top_n(effective_date, market_df, st.session_state.window_days, st.session_state.top_n)
 
-    # ====================== 【关键新增】批量获取实时价格 ======================
+    # 【核心修复2】先批量快速拿价格，拿不到的再用单股强力接口
     top_codes = df_today['ts_code'].tolist() if not df_today.empty else []
     realtime_map = {}
     if top_codes:
-        realtime_map = batch_get_realtime_prices(top_codes)
+        realtime_map = batch_get_realtime_prices(top_codes)   # 先试批量（快）
+        
+        # 批量没拿到的，逐只走你原来写的 5 个备用接口（超级稳）
+        for code in top_codes:
+            code6 = str(code)[:6]
+            if code6 not in realtime_map:
+                price = get_real_time_price(code)   # ← 这里真正调用强力函数！
+                if price is not None:
+                    realtime_map[code6] = price
+
         if debug_mode:
-            st.info(f"✅ 实时价格获取成功：{len(realtime_map)} 只（{ '今日实时' if is_today else '历史收盘' }）")
+            st.info(f"✅ 实时价格获取完成！成功 {len(realtime_map)} 只（{'今日实时' if is_today else '历史收盘'}）")
 
     # ====================== 昨天对比 ======================
     yesterday_date = None
