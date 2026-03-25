@@ -64,14 +64,15 @@ def get_real_time_price(ts_code):
 
 @st.cache_data(ttl=30, show_spinner=False)
 def batch_get_realtime_prices(ts_code_list):
-    """真批量版 + 完全使用 session_state.debug_mode"""
+    """最终稳定版：专为40只股票优化 + 强异常处理"""
     prices = {}
     codes = [str(c)[:6] for c in ts_code_list if c]
     
     if st.session_state.get("debug_mode", False):
-        st.info(f"📡 极速批量模式启动：共 {len(codes)} 只股票 → 每次拉 150 只")
+        st.info(f"📡 极速批量模式启动：共 {len(codes)} 只股票 → 每次拉 40 只（已优化）")
     
-    batch_size = 150
+    batch_size = 40   # ← 关键！改成40只，避免Tushare内部报错
+    
     for i in range(0, len(codes), batch_size):
         batch = codes[i:i + batch_size]
         batch_str = ','.join(batch)
@@ -83,14 +84,15 @@ def batch_get_realtime_prices(ts_code_list):
                     p = float(row.get('PRICE') or row.get('price', 0))
                     if p > 0:
                         prices[code6] = round(p, 2)
-        except Exception as e:
+        except Exception as e:   # 加强捕获
             if st.session_state.get("debug_mode", False):
-                st.write(f"   ❌ 批量异常: {str(e)[:80]}")   # ← 已加长显示错误信息
-            continue   # 继续下一批，不中断整个过程
+                st.write(f"   ❌ 批量异常: {type(e).__name__} - {str(e)[:100]}")
+            continue   # 继续下一批
     
     if st.session_state.get("debug_mode", False):
         st.success(f"✅ 批量实时价格获取完成！成功 {len(prices)} 只")
     return prices
+    
 # ====================== 其他原有函数（保持不变） ======================
 @st.cache_data(ttl=3600*24)
 def get_stock_info():
