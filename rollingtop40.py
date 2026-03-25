@@ -24,55 +24,71 @@ if "current_date" not in st.session_state:
 TOKEN = st.secrets["tushare"]["token"]
 pro = ts.pro_api(TOKEN)
 
-# ====================== 【2026最新加强版】实时价格核心函数 ======================
+# ====================== 【2026最终修正版】实时价格核心函数 ======================
 @st.cache_data(ttl=30, show_spinner=False)
 def get_real_time_price(ts_code):
-    """5接口全覆盖 + 详细调试"""
+    """完全复制 celue2 的 5接口诊断版 + 使用 session_state.debug_mode"""
     try:
         pro = ts.pro_api(TOKEN)
+        now = datetime.datetime.now()
+        today_str = now.strftime("%Y%m%d")
+        
         interfaces = [
-            ("pro.rt_k", lambda: pro.rt_k(ts_code=ts_code), 'close'),
+            ("rt_k", lambda: pro.rt_k(ts_code=ts_code), 'close'),
             ("sina", lambda: ts.realtime_quote(ts_code=ts_code, src='sina'), 'price'),
             ("dc",   lambda: ts.realtime_quote(ts_code=ts_code, src='dc'), 'price'),
             ("quote", lambda: pro.quote(ts_code=ts_code), 'price'),
-            ("1min", lambda: pro.min(ts_code=ts_code, freq='1min', start_date=datetime.datetime.now().strftime("%Y%m%d"), end_date=datetime.datetime.now().strftime("%Y%m%d")), 'close'),
+            ("1min", lambda: pro.min(ts_code=ts_code, freq='1min', start_date=today_str, end_date=today_str), 'close'),
         ]
+        
         for name, func, col in interfaces:
             try:
                 df = func()
                 if df is not None and not df.empty and col in df.columns:
                     price = float(df[col].iloc[-1])
                     if price > 0:
-                        if debug_mode: st.success(f"✅ {ts_code} 通过 {name} 拿到实时价 {price}")
+                        if st.session_state.get("debug_mode", False):
+                            st.success(f"✅ {ts_code} 通过 **{name}** 接口拿到实时价: {price}")
                         return round(price, 2)
-            except:
-                if debug_mode: st.write(f"   ❌ {name} 失败")
+            except Exception as e:
+                if st.session_state.get("debug_mode", False):
+                    st.write(f"   ❌ {name} 接口失败: {str(e)[:60]}")
                 continue
+        if st.session_state.get("debug_mode", False):
+            st.warning(f"⚠️ {ts_code} 所有实时接口全失败 → 回落到历史收盘价")
     except Exception as e:
-        if debug_mode: st.error(f"整体异常: {str(e)[:80]}")
-    if debug_mode: st.warning(f"⚠️ {ts_code} 所有接口失败 → 用历史收盘")
+        if st.session_state.get("debug_mode", False):
+            st.error(f"❌ get_real_time_price 整体异常 {ts_code}: {str(e)[:80]}")
     return None
+
 
 @st.cache_data(ttl=30, show_spinner=False)
 def batch_get_realtime_prices(ts_code_list):
-    """真批量版（一次性拉取）"""
+    """真批量版 + 使用 session_state.debug_mode"""
     prices = {}
-    codes = [c[:6] for c in ts_code_list if c]
-    batch_size = 120
+    codes = [str(c)[:6] for c in ts_code_list if c]
+    
+    if st.session_state.get("debug_mode", False):
+        st.info(f"📡 极速批量模式启动：共 {len(codes)} 只股票 → 每次拉 150 只")
+    
+    batch_size = 150
     for i in range(0, len(codes), batch_size):
-        batch = codes[i:i+batch_size]
+        batch = codes[i:i + batch_size]
+        batch_str = ','.join(batch)
         try:
-            df = ts.realtime_quote(ts_code=','.join(batch), src='sina')
+            df = ts.realtime_quote(ts_code=batch_str, src='sina')
             if not df.empty:
                 for _, row in df.iterrows():
                     code6 = str(row.get('TS_CODE') or row.get('ts_code', ''))[:6]
                     p = float(row.get('PRICE') or row.get('price', 0))
                     if p > 0:
                         prices[code6] = round(p, 2)
-        except:
-            pass
-    if debug_mode:
-        st.info(f"✅ 批量实时价格获取成功 {len(prices)} 只")
+        except Exception as e:
+            if st.session_state.get("debug_mode", False):
+                st.write(f"   ❌ 批量异常: {str(e)[:60]}")
+    
+    if st.session_state.get("debug_mode", False):
+        st.success(f"✅ 批量实时价格获取完成！成功 {len(prices)} 只")
     return prices
 
 # ====================== 其他原有函数（保持不变） ======================
@@ -151,7 +167,16 @@ with st.sidebar:
     zoom_level = st.slider("🔍 界面缩放（手机推荐）", 0.7, 1.5, 1.0, 0.05)
     window_days = st.number_input("统计周期 (天)", 5, 60, 10, key="window_days")
     top_n = st.number_input("显示数量", 10, 100, 40, key="top_n")
-    debug_mode = st.checkbox("🔧 显示实时价格调试信息", value=False)
+    # ====================== 调试开关（必须加 session_state） ======================
+    if "debug_mode" not in st.session_state:
+        st.session_state.debug_mode = False
+    
+    debug_mode = st.checkbox(
+        "🔧 显示实时价格调试信息", 
+        value=st.session_state.debug_mode, 
+        key="debug_mode_checkbox"
+    )
+    st.session_state.debug_mode = debug_mode   # 同步回 session_state
     st.divider()
     picked_date = st.date_input("手动选择观察日期", value=st.session_state.current_date)
     if picked_date != st.session_state.current_date:
