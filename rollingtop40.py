@@ -22,6 +22,7 @@ if "current_date" not in st.session_state:
     st.session_state.current_date = datetime.date.today()
 
 TOKEN = st.secrets["tushare"]["token"]
+ts.set_token(TOKEN)
 pro = ts.pro_api(TOKEN)
 
 # ====================== 【2026最终修正版】实时价格核心函数 ======================
