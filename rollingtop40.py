@@ -28,7 +28,6 @@ pro = ts.pro_api(TOKEN)
 # ====================== 【2026最终修正版】实时价格核心函数 ======================
 @st.cache_data(ttl=30, show_spinner=False)
 def get_real_time_price(ts_code):
-    """完全复制 celue2 的 5接口诊断版 + 使用 session_state.debug_mode"""
     try:
         pro = ts.pro_api(TOKEN)
         now = datetime.datetime.now()
@@ -65,7 +64,7 @@ def get_real_time_price(ts_code):
 
 @st.cache_data(ttl=30, show_spinner=False)
 def batch_get_realtime_prices(ts_code_list):
-    """真批量版 + 使用 session_state.debug_mode"""
+    """真批量版 + 完全使用 session_state.debug_mode"""
     prices = {}
     codes = [str(c)[:6] for c in ts_code_list if c]
     
@@ -86,12 +85,12 @@ def batch_get_realtime_prices(ts_code_list):
                         prices[code6] = round(p, 2)
         except Exception as e:
             if st.session_state.get("debug_mode", False):
-                st.write(f"   ❌ 批量异常: {str(e)[:60]}")
+                st.write(f"   ❌ 批量异常: {str(e)[:80]}")   # ← 已加长显示错误信息
+            continue   # 继续下一批，不中断整个过程
     
     if st.session_state.get("debug_mode", False):
         st.success(f"✅ 批量实时价格获取完成！成功 {len(prices)} 只")
     return prices
-
 # ====================== 其他原有函数（保持不变） ======================
 @st.cache_data(ttl=3600*24)
 def get_stock_info():
