@@ -10,26 +10,11 @@ st.set_page_config(page_title="做T交易记录 & 收益计算", layout="wide")
 st.title("📈 股票做T交易记录与收益计算 App")
 st.markdown("**v5.2 交易金额显示版** | 涨红跌绿版 | 蜡烛图：涨=红 跌=绿 | 成交量同步修改 | 所有功能完整保留")
 
-# ==================== 左侧边栏 - Tushare Token ====================
-with st.sidebar:
-    st.header("🔑 Tushare 配置")
-    if "tushare_token" not in st.session_state:
-        st.session_state.tushare_token = ""
-    
-    token_input = st.text_input(
-        "Tushare Pro Token", 
-        value=st.session_state.tushare_token, 
-        type="password",
-        help="去 https://tushare.pro 免费注册获取 Token"
-    )
-    if st.button("💾 保存 Token"):
-        st.session_state.tushare_token = token_input
-        if token_input.strip():
-            st.success("✅ Token 已保存！")
-            st.rerun()
-        else:
-            st.warning("Token 不能为空")
-    st.caption("Token 只保存在浏览器，本地运行安全")
+# ==================== Tushare Token 配置（生产环境使用 Streamlit Secrets） ====================
+# 优先从 secrets.toml 读取（生产部署推荐）
+# 本地开发/测试也可以创建 .streamlit/secrets.toml 文件
+if "tushare_token" not in st.session_state:
+    st.session_state.tushare_token = st.secrets.get("tushare_token", "")
 
 # ==================== 初始化 session_state ====================
 if "trades" not in st.session_state:
