@@ -87,6 +87,13 @@ def calc_profit(buy_price, sell_price, qty, comm_rate=0.0003):
     net_profit = gross - buy_comm - sell_comm - stamp_tax
     return gross, buy_comm, sell_comm, stamp_tax, net_profit
 
+def normalize_stock_code(code):
+    """将股票代码标准化为6位字符串，自动补前导0（解决002460变成2460的问题）"""
+    code = str(code).strip().upper()
+    if code.isdigit() and len(code) < 6:
+        code = code.zfill(6)          # 自动补前导0
+    return code
+
 def calc_transaction_amount(row):
     qty = row.get("股数", 0)
     if pd.isna(qty) or qty <= 0:
@@ -104,8 +111,7 @@ def calc_transaction_amount(row):
 
 @st.cache_data(ttl=3600)
 def get_kline_data(stock_code: str, days: int = 90):
-    if not st.session_state.get("tushare_token", "").strip():
-        return None, "请先在左侧边栏输入并保存 Tushare Token"
+    stock_code = normalize_stock_code(stock_code)
     try:
         pro = ts.pro_api(st.session_state.tushare_token)
         code = stock_code.strip().upper()
@@ -274,6 +280,7 @@ with tab1:
         with col1:
             trade_date = st.date_input("交易日期", value=date.today())
             stock_code = st.text_input("股票代码", placeholder="600519 或 688001").upper()
+            stock_code = normalize_stock_code(stock_code)   # ←←← 新增这一行
         with col2:
             buy_price = None
             sell_price = None
