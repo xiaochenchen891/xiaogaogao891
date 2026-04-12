@@ -405,10 +405,10 @@ with tab2:
         display_df = df.copy()
         display_df["交易金额"] = display_df.apply(calc_transaction_amount, axis=1)
         
-        # 🔥 新增：动态计算卖出净利润（基于前面所有买入的平均成本）
+        # 计算卖出净利润（平均成本法）
         display_df = calculate_realized_net_profit(display_df)
         
-        # 计算仓位累计总金额（用于仓位占比）
+        # 计算仓位累计总金额用于占比
         display_df = display_df.sort_values(["股票代码", "交易日期"]).reset_index(drop=True)
         display_df["累计交易金额"] = display_df.groupby("股票代码")["交易金额"].cumsum().abs()
         
@@ -440,7 +440,6 @@ with tab2:
             }
         )
         
-        # 保存逻辑（净利润在显示时动态计算，保存时清零）
         if not edited_df.equals(display_df.sort_values("交易日期", ascending=False)):
             st.session_state.trades = edited_df.drop(columns=["交易金额", "仓位占比", "净利润"], errors="ignore").copy()
             
@@ -469,36 +468,50 @@ with tab2:
                 st.success("✅ CSV 已合并")
                 st.rerun()
 
-    # ==================== 按股票分组查看（保持不变） ====================
+    # ==================== 新版可视化汇总（已去掉所有详细表格） ====================
     st.markdown("---")
-    st.subheader("📌 按股票分组查看")
+    st.subheader("📊 交易可视化汇总")
     
-    if len(df) > 0:
-        unique_stocks = sorted(df["股票代码"].dropna().unique())
-        for stock in unique_stocks:
-            stock_df = df[df["股票代码"] == stock].copy().sort_values("交易日期").reset_index(drop=True)
-            
-            # 计算累计持仓
-            current_shares = 0
-            cum_list = []
-            for _, row in stock_df.iterrows():
-                if row["交易类型"] == "仅买入":
-                    current_shares += row.get("股数", 0)
-                elif row["交易类型"] == "仅卖出":
-                    current_shares = max(0, current_shares - row.get("股数", 0))
-                cum_list.append(current_shares)
-            stock_df["累计持仓"] = cum_list
-            
-            with st.expander(f"📍 {stock} 的交易记录（{len(stock_df)} 笔）", expanded=True):
-                st.dataframe(
-                    stock_df[["交易日期", "交易类型", "买入价格", "卖出价格", "股数", 
-                              "买入佣金", "卖出佣金", "印花税", "累计持仓"]],
-                    use_container_width=True,
-                    hide_index=True
-                )
-                total_buy = stock_df[stock_df["交易类型"] == "仅买入"]["股数"].sum()
-                total_sell = stock_df[stock_df["交易类型"] == "仅卖出"]["股数"].sum()
-                st.caption(f"**当前持仓**：{max(0, total_buy - total_sell)} 股　|　累计买入：{total_buy} 股　|　累计卖出：{total_sell} 股")
+    if not st.session_state.trades.empty:
+        viz_df = calculate_realized_net_profit(st.session_state.trades.copy())
+        viz_df["交易金额"] = viz_df.apply(calc_transaction_amount, axis=1)
+        viz_df = viz_df.sort_values("交易日期").reset_index(drop=True)
+        
+        # 一行简洁结论
+        total_trades = len(viz_df)
+        total_net = viz_df["净利润"].sum()
+        st.markdown(f"**当前共有 {total_trades} 笔交易 | 总实现净利润：{total_net:,.2f} 元**")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # 饼图：各股票仓位占比
+            stock_position = viz_df.groupby("股票代码")["交易金额"].sum().abs()
+            fig_pie = px.pie(
+                names=stock_position.index,
+                values=stock_position.values,
+                title="各股票仓位占比（累计交易金额）",
+                hole=0.4,
+                color_discrete_sequence=px.colors.sequential.RdBu
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+        
+        with col2:
+            # 折线图：累计净利润
+            viz_df["累计净利润"] = viz_df["净利润"].cumsum()
+            fig_line = px.line(
+                viz_df,
+                x="交易日期",
+                y="累计净利润",
+                title="累计净利润走势",
+                markers=True,
+                line_shape="linear"
+            )
+            fig_line.update_layout(
+                yaxis_title="累计净利润 (元)",
+                xaxis_title="交易日期"
+            )
+            st.plotly_chart(fig_line, use_container_width=True)
 
 with tab3:
     st.subheader("📊 做T 总体收益统计")
