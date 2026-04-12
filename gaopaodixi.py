@@ -283,7 +283,14 @@ with tab1:
         with col1:
             trade_date = st.date_input("交易日期", value=date.today())
             stock_code = st.text_input("股票代码", placeholder="600519 或 688001").upper()
-            stock_code = normalize_stock_code(stock_code)   # ←←← 新增这一行
+            stock_code = normalize_stock_code(stock_code)
+            total_position = st.number_input(
+                "总仓位（元）", 
+                min_value=10000.0, 
+                value=float(st.session_state.total_funds), 
+                step=10000.0,
+                help="请输入你的做T总资金，用于计算仓位占比"
+            )
         with col2:
             buy_price = None
             sell_price = None
@@ -297,6 +304,7 @@ with tab1:
             pass
         notes = st.text_input("备注（可选）", placeholder="例如：早盘低开拉升")
         submitted = st.form_submit_button("✅ 提交本次做T记录")
+        
         if submitted:
             # 🔥 自动计算佣金和印花税
             buy_comm = sell_comm = stamp = 0.0
@@ -305,6 +313,9 @@ with tab1:
             elif trade_type == "仅卖出" and sell_price and qty:
                 sell_comm = max(5.0, round(sell_price * qty * comm_rate, 2))
                 stamp = round(sell_price * qty * 0.0003, 2)   # 万3印花税
+
+            # 更新全局总仓位
+            st.session_state.total_funds = total_position
 
             new_row = pd.DataFrame([{
                 "交易日期": trade_date, 
@@ -320,12 +331,13 @@ with tab1:
                 "毛利润": 0.0,
                 "净利润": 0.0, 
                 "备注": notes,
-                "交易金额": calc_transaction_amount({"交易类型": trade_type, "买入价格": buy_price, "卖出价格": sell_price, "股数": qty})
+                "交易金额": calc_transaction_amount({"交易类型": trade_type, "买入价格": buy_price, "卖出价格": sell_price, "股数": qty}),
+                "总仓位": total_position   # 新增字段
             }])
             st.session_state.trades = pd.concat([st.session_state.trades, new_row], ignore_index=True)
             st.session_state.last_stock_code = stock_code
             save_trades_data()
-            st.success(f"✅ 已自动计算佣金和印花税！记录保存成功")
+            st.success(f"✅ 记录保存成功！佣金+印花税已自动计算，仓位占比将在 Tab2 显示")
             st.rerun()
 
 with tab2:
@@ -336,6 +348,15 @@ with tab2:
     else:
         display_df = df.copy()
         display_df["交易金额"] = display_df.apply(calc_transaction_amount, axis=1)
+        
+        # 计算仓位占比
+        if "总仓位" in display_df.columns and st.session_state.total_funds > 0:
+            display_df["仓位占比"] = display_df.apply(
+                lambda x: f"{(x['交易金额'] / x['总仓位'] * 100):.2f}%" if x['总仓位'] > 0 else "0.00%", 
+                axis=1
+            )
+        else:
+            display_df["仓位占比"] = "0.00%"
         
         edited_df = st.data_editor(
             display_df.sort_values("交易日期", ascending=False),
@@ -348,12 +369,14 @@ with tab2:
                 "卖出佣金": st.column_config.NumberColumn(format="%.2f", help="可手动修改"),
                 "印花税": st.column_config.NumberColumn(format="%.2f", help="自动万3，仅卖出时"),
                 "交易金额": st.column_config.NumberColumn(format="%.2f"),
+                "仓位占比": st.column_config.TextColumn(help="交易金额占总仓位的比例"),
+                "总仓位": st.column_config.NumberColumn(format="%.0f", help="当时输入的总仓位"),
             }
         )
         
-        # 保存时自动重新计算印花税（防止手动改价格后不更新）
+        # 保存逻辑
         if not edited_df.equals(display_df.sort_values("交易日期", ascending=False)):
-            st.session_state.trades = edited_df.drop(columns=["交易金额"], errors="ignore").copy()
+            st.session_state.trades = edited_df.drop(columns=["交易金额", "仓位占比"], errors="ignore").copy()
             
             def auto_calc_tax(row):
                 if row["交易类型"] == "仅卖出" and pd.notna(row.get("卖出价格")) and pd.notna(row.get("股数")):
@@ -380,16 +403,13 @@ with tab2:
                 st.success("✅ CSV 已合并")
                 st.rerun()
 
-    # ==================== 第二个表格：按股票分组查看 ====================
+    # 按股票分组查看（保持不变）
     st.markdown("---")
     st.subheader("📌 按股票分组查看")
-    
     if len(df) > 0:
         unique_stocks = sorted(df["股票代码"].dropna().unique())
         for stock in unique_stocks:
             stock_df = df[df["股票代码"] == stock].copy().sort_values("交易日期").reset_index(drop=True)
-            
-            # 计算累计持仓
             current_shares = 0
             cum_list = []
             for _, row in stock_df.iterrows():
