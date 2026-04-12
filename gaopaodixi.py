@@ -324,7 +324,7 @@ with tab2:
     if len(df) == 0:
         st.info("还没有记录任何交易～")
     else:
-        # ==================== 1. 主编辑表格（保持原有编辑功能） ====================
+        # ==================== 1. 主编辑表格 ====================
         display_df = df.copy()
         display_df["交易金额"] = display_df.apply(calc_transaction_amount, axis=1)
         
@@ -335,17 +335,30 @@ with tab2:
             num_rows="dynamic",
             column_config={
                 "交易日期": st.column_config.DateColumn(format="YYYY-MM-DD"),
+                "买入佣金": st.column_config.NumberColumn(format="%.2f", help="手动填写买入佣金"),
+                "卖出佣金": st.column_config.NumberColumn(format="%.2f", help="手动填写卖出佣金"),
+                "印花税": st.column_config.NumberColumn(format="%.2f", help="自动按万3计算"),
                 "净利润": st.column_config.NumberColumn(format="%.2f"),
-                "交易金额": st.column_config.NumberColumn(format="%.2f", help="当前交易总金额（元）"),
+                "交易金额": st.column_config.NumberColumn(format="%.2f", help="本次交易本金金额"),
             }
         )
         
-        # ==================== 自动清理空行 + 保存 ====================
+        # ==================== 保存 + 自动计算 ====================
         if not edited_df.equals(display_df.sort_values("交易日期", ascending=False)):
-            st.session_state.trades = edited_df.drop(columns=["交易金额"], errors="ignore")
-            # 🔥 关键修复：自动删除没有股票代码的空行
-            st.session_state.trades = st.session_state.trades.dropna(subset=["股票代码"]).reset_index(drop=True)
+            st.session_state.trades = edited_df.drop(columns=["交易金额"], errors="ignore").copy()
+            
+            # 🔥 佣金手动填写，印花税自动按万3计算
+            def auto_calc_tax(row):
+                if row["交易类型"] == "仅卖出" and pd.notna(row.get("卖出价格")) and pd.notna(row.get("股数")):
+                    return round(row["卖出价格"] * row["股数"] * 0.0003, 2)
+                return row.get("印花税", 0) or 0
+            
+            st.session_state.trades["印花税"] = st.session_state.trades.apply(auto_calc_tax, axis=1)
             st.session_state.trades["交易金额"] = st.session_state.trades.apply(calc_transaction_amount, axis=1)
+            
+            # 清理空行
+            st.session_state.trades = st.session_state.trades.dropna(subset=["股票代码"]).reset_index(drop=True)
+            
             save_trades_data()
             st.rerun()
 
@@ -363,7 +376,34 @@ with tab2:
                 st.success("✅ CSV 数据已合并并自动保存")
                 st.rerun()
 
-        # ==================== 2. 新增：按股票分组的独立表格（带累计统计） ====================
+        # ==================== 2. 新增：交易汇总统计 ====================
+        st.markdown("---")
+        st.subheader("📊 交易汇总统计")
+        if not st.session_state.trades.empty:
+            total_amount = st.session_state.trades["交易金额"].sum()
+            total_buy_comm = st.session_state.trades["买入佣金"].sum()
+            total_sell_comm = st.session_state.trades["卖出佣金"].sum()
+            total_tax = st.session_state.trades["印花税"].sum()
+            total_comm = total_buy_comm + total_sell_comm
+            
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("总交易金额", f"{total_amount:,.2f} 元")
+            col2.metric("总佣金", f"{total_comm:,.2f} 元")
+            col3.metric("总税金", f"{total_tax:,.2f} 元")
+            col4.metric("总笔数", len(st.session_state.trades))
+            
+            # 按股票汇总
+            stock_summary = st.session_state.trades.groupby("股票代码").agg({
+                "交易金额": "sum",
+                "买入佣金": "sum",
+                "卖出佣金": "sum",
+                "印花税": "sum",
+                "股数": "sum"
+            }).reset_index()
+            stock_summary.columns = ["股票代码", "交易金额合计", "买入佣金合计", "卖出佣金合计", "税金合计", "总股数"]
+            st.dataframe(stock_summary, use_container_width=True, hide_index=True)
+
+        # ==================== 3. 按股票分组的独立表格（保持原有累计功能） ====================
         st.markdown("---")
         st.subheader("📌 按股票分组查看（每只股票独立表格 + 累计数据）")
         
@@ -396,8 +436,7 @@ with tab2:
             stock_df["累计持仓"] = cum_list
             stock_df["累计交易金额"] = amount_list
             
-            # 显示独立表格
-            with st.expander(f"📍 {stock}  的交易记录（{len(stock_df)} 笔）", expanded=True):
+            with st.expander(f"📍 {stock} 的交易记录（{len(stock_df)} 笔）", expanded=True):
                 st.dataframe(
                     stock_df[[
                         "交易日期", "交易类型", "买入价格", "卖出价格", "股数",
@@ -407,7 +446,6 @@ with tab2:
                     hide_index=True
                 )
                 
-                # 底部小计
                 total_buy = stock_df[stock_df["交易类型"] == "仅买入"]["股数"].sum()
                 total_sell = stock_df[stock_df["交易类型"] == "仅卖出"]["股数"].sum()
                 current_position = max(0, total_buy - total_sell)
