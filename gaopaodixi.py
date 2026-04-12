@@ -49,7 +49,11 @@ if "total_funds" not in st.session_state:
 if "trades" not in st.session_state:
     if os.path.exists(DATA_FILE):
         try:
-            loaded_df = pd.read_csv(DATA_FILE, encoding="utf-8")
+            loaded_df = pd.read_csv(
+                DATA_FILE,
+                encoding="utf-8"
+                dtype={"股票代码": str}   # ←←← 在这里加上这一行
+            )
             if "交易日期" in loaded_df.columns:
                 loaded_df["交易日期"] = pd.to_datetime(loaded_df["交易日期"]).dt.date
             st.session_state.trades = loaded_df
