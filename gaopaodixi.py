@@ -51,7 +51,7 @@ if "trades" not in st.session_state:
         try:
             loaded_df = pd.read_csv(
                 DATA_FILE,
-                encoding="utf-8"
+                encoding="utf-8"，
                 dtype={"股票代码": str}   # ←←← 在这里加上这一行
             )
             if "交易日期" in loaded_df.columns:
