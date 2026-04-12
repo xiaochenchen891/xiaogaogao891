@@ -468,7 +468,7 @@ with tab2:
                 st.success("✅ CSV 已合并")
                 st.rerun()
 
-    # ==================== 交易可视化汇总（按股票分组讨论） ====================
+    # ==================== 交易可视化汇总（按股票分组 + 左右分列） ====================
     st.markdown("---")
     st.subheader("📊 交易可视化汇总（按股票分组）")
     
@@ -477,30 +477,28 @@ with tab2:
         viz_df["交易金额"] = viz_df.apply(calc_transaction_amount, axis=1)
         viz_df = viz_df.sort_values("交易日期").reset_index(drop=True)
         
-        # 全局一行总结
+        # 全局总结
         total_trades = len(viz_df)
         total_net = viz_df["净利润"].sum()
         st.markdown(f"**当前共有 {total_trades} 笔交易 | 总实现净利润：{total_net:,.2f} 元**")
         
         # 全局饼图（各股票仓位占比）
         stock_position = viz_df.groupby("股票代码")["交易金额"].sum().abs()
-        fig_pie = px.pie(
+        fig_global_pie = px.pie(
             names=stock_position.index,
             values=stock_position.values,
             title="各股票仓位占比（累计交易金额）",
             hole=0.4,
             color_discrete_sequence=px.colors.sequential.RdBu
         )
-        st.plotly_chart(fig_pie, use_container_width=True)
+        st.plotly_chart(fig_global_pie, use_container_width=True)
         
-        # 按股票分组讨论
         st.markdown("**📌 按股票代码分组详细讨论**")
         unique_stocks = sorted(viz_df["股票代码"].dropna().unique())
         
         for stock in unique_stocks:
             stock_df = viz_df[viz_df["股票代码"] == stock].copy().sort_values("交易日期").reset_index(drop=True)
             
-            # 计算该股票关键指标
             stock_net = stock_df["净利润"].sum()
             stock_trades = len(stock_df)
             
@@ -513,27 +511,45 @@ with tab2:
                     current_shares = max(0, current_shares - row.get("股数", 0))
             
             with st.expander(f"📍 {stock} 交易总结（{stock_trades} 笔）", expanded=True):
+                # 指标行
                 col1, col2, col3 = st.columns(3)
                 col1.metric("该股票总净利润", f"{stock_net:,.2f} 元")
                 col2.metric("交易笔数", stock_trades)
                 col3.metric("当前持仓", f"{current_shares} 股")
                 
-                # 该股票专属累计净利润折线图
-                stock_df["累计净利润"] = stock_df["净利润"].cumsum()
-                fig_line = px.line(
-                    stock_df,
-                    x="交易日期",
-                    y="累计净利润",
-                    title=f"{stock} 累计净利润走势",
-                    markers=True,
-                    line_shape="linear"
-                )
-                fig_line.update_layout(
-                    yaxis_title="累计净利润 (元)",
-                    xaxis_title="交易日期",
-                    height=400
-                )
-                st.plotly_chart(fig_line, use_container_width=True)
+                # 🔥 左右分列：仓位饼图 + 净利润折线图
+                chart_col1, chart_col2 = st.columns(2)
+                
+                with chart_col1:
+                    # 该股票仓位饼图（累计买入金额 vs 累计卖出金额）
+                    buy_amount = stock_df[stock_df["交易类型"] == "仅买入"]["交易金额"].sum()
+                    sell_amount = abs(stock_df[stock_df["交易类型"] == "仅卖出"]["交易金额"].sum())
+                    fig_pie = px.pie(
+                        names=["累计买入金额", "累计卖出金额"],
+                        values=[buy_amount, sell_amount],
+                        title=f"{stock} 仓位结构",
+                        hole=0.3,
+                        color_discrete_sequence=["#00ff88", "#ff4444"]
+                    )
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                
+                with chart_col2:
+                    # 该股票累计净利润折线图
+                    stock_df["累计净利润"] = stock_df["净利润"].cumsum()
+                    fig_line = px.line(
+                        stock_df,
+                        x="交易日期",
+                        y="累计净利润",
+                        title=f"{stock} 累计净利润走势",
+                        markers=True,
+                        line_shape="linear"
+                    )
+                    fig_line.update_layout(
+                        yaxis_title="累计净利润 (元)",
+                        xaxis_title="交易日期",
+                        height=400
+                    )
+                    st.plotly_chart(fig_line, use_container_width=True)
 
 with tab3:
     st.subheader("📊 做T 总体收益统计")
