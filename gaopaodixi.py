@@ -358,6 +358,9 @@ with tab2:
         else:
             display_df["仓位占比"] = "0.00%"
         
+        # 🔥 只在这里去掉备注和毛利润列，主表格更干净
+        display_df = display_df.drop(columns=["备注", "毛利润"], errors="ignore")
+        
         edited_df = st.data_editor(
             display_df.sort_values("交易日期", ascending=False),
             hide_index=True,
@@ -403,7 +406,7 @@ with tab2:
                 st.success("✅ CSV 已合并")
                 st.rerun()
 
-    # ==================== 按股票分组查看（已去掉备注和毛利润） ====================
+    # ==================== 按股票分组查看（保持不变） ====================
     st.markdown("---")
     st.subheader("📌 按股票分组查看")
     
