@@ -319,10 +319,12 @@ with tab1:
             st.rerun()
 
 with tab2:
-    st.subheader("所有交易记录")
+    st.subheader("📋 所有交易记录（可编辑主表格）")
+    
     if len(df) == 0:
         st.info("还没有记录任何交易～")
     else:
+        # ==================== 1. 主编辑表格（保持原有编辑功能） ====================
         display_df = df.copy()
         display_df["交易金额"] = display_df.apply(calc_transaction_amount, axis=1)
         
@@ -338,12 +340,11 @@ with tab2:
             }
         )
         
+        # ==================== 自动清理空行 + 保存 ====================
         if not edited_df.equals(display_df.sort_values("交易日期", ascending=False)):
             st.session_state.trades = edited_df.drop(columns=["交易金额"], errors="ignore")
-            
-            # 🔥 新增：清理空行和没有股票代码的脏数据
+            # 🔥 关键修复：自动删除没有股票代码的空行
             st.session_state.trades = st.session_state.trades.dropna(subset=["股票代码"]).reset_index(drop=True)
-            
             st.session_state.trades["交易金额"] = st.session_state.trades.apply(calc_transaction_amount, axis=1)
             save_trades_data()
             st.rerun()
@@ -355,11 +356,62 @@ with tab2:
         with col_ul:
             uploaded = st.file_uploader("📤 从 CSV 导入合并数据", type=["csv"])
             if uploaded:
-                new_df = pd.read_csv(uploaded)
+                new_df = pd.read_csv(uploaded, dtype={"股票代码": str})
                 st.session_state.trades = pd.concat([st.session_state.trades, new_df]).drop_duplicates(subset=["交易日期", "股票代码", "交易类型"]).reset_index(drop=True)
+                st.session_state.trades = st.session_state.trades.dropna(subset=["股票代码"]).reset_index(drop=True)
                 save_trades_data()
-                st.success("✅ CSV 数据已合并并**自动保存至本地**")
+                st.success("✅ CSV 数据已合并并自动保存")
                 st.rerun()
+
+        # ==================== 2. 新增：按股票分组的独立表格（带累计统计） ====================
+        st.markdown("---")
+        st.subheader("📌 按股票分组查看（每只股票独立表格 + 累计数据）")
+        
+        unique_stocks = sorted(df["股票代码"].dropna().unique())
+        
+        for stock in unique_stocks:
+            stock_df = df[df["股票代码"] == stock].copy()
+            stock_df = stock_df.sort_values("交易日期").reset_index(drop=True)
+            
+            # 计算累计持仓和累计交易金额
+            current_shares = 0
+            cum_amount = 0.0
+            cum_list = []
+            amount_list = []
+            
+            for _, row in stock_df.iterrows():
+                t_type = row.get("交易类型", "")
+                qty = row.get("股数", 0)
+                amt = calc_transaction_amount(row)
+                
+                if t_type == "仅买入":
+                    current_shares += qty
+                elif t_type == "仅卖出":
+                    current_shares = max(0, current_shares - qty)
+                
+                cum_amount += amt
+                cum_list.append(current_shares)
+                amount_list.append(round(cum_amount, 2))
+            
+            stock_df["累计持仓"] = cum_list
+            stock_df["累计交易金额"] = amount_list
+            
+            # 显示独立表格
+            with st.expander(f"📍 {stock}  的交易记录（{len(stock_df)} 笔）", expanded=True):
+                st.dataframe(
+                    stock_df[[
+                        "交易日期", "交易类型", "买入价格", "卖出价格", "股数",
+                        "交易金额", "累计持仓", "累计交易金额", "备注"
+                    ]],
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                # 底部小计
+                total_buy = stock_df[stock_df["交易类型"] == "仅买入"]["股数"].sum()
+                total_sell = stock_df[stock_df["交易类型"] == "仅卖出"]["股数"].sum()
+                current_position = max(0, total_buy - total_sell)
+                st.caption(f"**当前持仓**：{current_position} 股　|　**累计买入**：{total_buy} 股　|　**累计卖出**：{total_sell} 股")
 
 with tab3:
     st.subheader("📊 做T 总体收益统计")
