@@ -374,7 +374,7 @@ with tab2:
             }
         )
         
-        # 保存逻辑
+        # 保存逻辑（自动重新计算印花税）
         if not edited_df.equals(display_df.sort_values("交易日期", ascending=False)):
             st.session_state.trades = edited_df.drop(columns=["交易金额", "仓位占比"], errors="ignore").copy()
             
@@ -403,13 +403,16 @@ with tab2:
                 st.success("✅ CSV 已合并")
                 st.rerun()
 
-    # 按股票分组查看（保持不变）
+    # ==================== 按股票分组查看（已去掉备注和毛利润） ====================
     st.markdown("---")
     st.subheader("📌 按股票分组查看")
+    
     if len(df) > 0:
         unique_stocks = sorted(df["股票代码"].dropna().unique())
         for stock in unique_stocks:
             stock_df = df[df["股票代码"] == stock].copy().sort_values("交易日期").reset_index(drop=True)
+            
+            # 计算累计持仓
             current_shares = 0
             cum_list = []
             for _, row in stock_df.iterrows():
@@ -423,7 +426,7 @@ with tab2:
             with st.expander(f"📍 {stock} 的交易记录（{len(stock_df)} 笔）", expanded=True):
                 st.dataframe(
                     stock_df[["交易日期", "交易类型", "买入价格", "卖出价格", "股数", 
-                              "买入佣金", "卖出佣金", "印花税", "累计持仓", "备注"]],
+                              "买入佣金", "卖出佣金", "印花税", "累计持仓"]],
                     use_container_width=True,
                     hide_index=True
                 )
