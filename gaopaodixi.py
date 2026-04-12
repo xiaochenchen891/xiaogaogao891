@@ -104,12 +104,12 @@ def calc_transaction_amount(row):
     t_type = row.get("交易类型", "")
     buy_p = row.get("买入价格")
     sell_p = row.get("卖出价格")
-    if t_type == "完整做T (买+卖)":
-        return round((buy_p or 0) * qty + (sell_p or 0) * qty, 2)
-    elif t_type == "仅买入":
-        return round((buy_p or 0) * qty, 2)
+    if t_type == "仅买入":
+        return round((buy_p or 0) * qty, 2)          # 买入正数
     elif t_type == "仅卖出":
-        return round((sell_p or 0) * qty, 2)
+        return -round((sell_p or 0) * qty, 2)       # 🔥 卖出改为负数
+    elif t_type == "完整做T (买+卖)":
+        return round((buy_p or 0) * qty - (sell_p or 0) * qty, 2)
     return 0.0
 
 @st.cache_data(ttl=3600)
@@ -351,7 +351,7 @@ with tab2:
         
         # 🔥 后台计算仓位累计总金额（用于仓位占比），但不在表格里显示
         display_df = display_df.sort_values(["股票代码", "交易日期"]).reset_index(drop=True)
-        display_df["累计交易金额"] = display_df.groupby("股票代码")["交易金额"].cumsum()  # 内部计算
+        display_df["累计交易金额"] = display_df.groupby("股票代码")["交易金额"].cumsum().abs()  # 绝对值用于占比
         
         # 使用仓位累计总金额计算占比
         if "总仓位" in display_df.columns and st.session_state.total_funds > 0:
@@ -362,7 +362,7 @@ with tab2:
         else:
             display_df["仓位占比"] = "0.00%"
         
-        # 去掉备注、毛利润、累计交易金额（不在主表格显示）
+        # 去掉不需要的列
         display_df = display_df.drop(columns=["备注", "毛利润", "累计交易金额"], errors="ignore")
         
         edited_df = st.data_editor(
