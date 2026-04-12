@@ -112,15 +112,34 @@ def calc_transaction_amount(row):
         return round((buy_p or 0) * qty - (sell_p or 0) * qty, 2)
     return 0.0
 
+@st.cache_data(ttl=3600)
+def get_close_price(stock_code: str, trade_date):
+    """获取某只股票在指定日期的收盘价（供净利润计算使用）"""
+    try:
+        k_data, error = get_kline_data(stock_code, days=180)  # 拉长到180天，避免日期太旧取不到
+        if error or k_data is None or k_data.empty:
+            return None
+        
+        trade_date = pd.to_datetime(trade_date).date()
+        row = k_data[k_data['trade_date'].dt.date == trade_date]
+        if not row.empty:
+            return float(row['close'].iloc[0])
+        return None
+    except:
+        return None
+
 def calculate_realized_net_profit(df):
-    """动态计算每笔卖出的净利润（加权平均成本法），买入净利润始终为0"""
+    """每笔交易都计算净利润（按你的新要求）：
+    - 仅买入：使用【交易当天收盘价】计算浮动净利润
+    - 仅卖出：保持计算已实现净利润（平均成本法）
+    """
     if df.empty:
         return df.copy()
     
     df = df.copy()
     df = df.sort_values(['股票代码', '交易日期']).reset_index(drop=True)
     df['净利润'] = 0.0
-    df['平均成本'] = 0.0  # 临时列
+    df['平均成本'] = 0.0
     
     for stock in df['股票代码'].dropna().unique():
         stock_mask = df['股票代码'] == stock
@@ -133,15 +152,26 @@ def calculate_realized_net_profit(df):
         for i, row in stock_df.iterrows():
             t_type = row['交易类型']
             qty = row.get('股数', 0)
+            trade_date = row['交易日期']
             
             if t_type == "仅买入":
                 buy_price = row.get('买入价格', 0)
+                buy_comm = row.get('买入佣金', 0)
+                
+                # 🔥 新逻辑：使用当天收盘价计算浮动净利润
+                close_price = get_close_price(row['股票代码'], trade_date)
+                if close_price and pd.notna(buy_price) and qty > 0:
+                    gross = (close_price - buy_price) * qty
+                    net = gross - buy_comm
+                    df.at[i, '净利润'] = round(net, 2)
+                else:
+                    df.at[i, '净利润'] = 0.0
+                
                 if pd.notna(buy_price) and qty > 0:
                     total_cost += buy_price * qty
                     total_shares += qty
                     avg_cost = total_cost / total_shares if total_shares > 0 else 0
                 
-                df.at[i, '净利润'] = 0.0
                 df.at[i, '平均成本'] = round(avg_cost, 3)
             
             elif t_type == "仅卖出":
@@ -150,20 +180,13 @@ def calculate_realized_net_profit(df):
                 stamp = row.get('印花税', 0)
                 
                 if pd.notna(sell_price) and qty > 0 and total_shares > 0:
-                    # 结算净利润
                     gross = (sell_price - avg_cost) * qty
                     net = gross - row.get('买入佣金', 0) - sell_comm - stamp
                     df.at[i, '净利润'] = round(net, 2)
                 else:
                     df.at[i, '净利润'] = 0.0
                 
-                # 更新持仓（卖出后减少股数）
                 total_shares = max(0, total_shares - qty)
-                if total_shares > 0:
-                    # 剩余持仓仍按原平均成本
-                    pass
-                else:
-                    avg_cost = 0.0
                 df.at[i, '平均成本'] = round(avg_cost, 3)
     
     return df
