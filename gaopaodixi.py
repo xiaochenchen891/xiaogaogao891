@@ -501,16 +501,16 @@ with tab2:
     st.subheader("📊 交易可视化汇总（按股票分组）")
     
     if not st.session_state.trades.empty:
-        viz_df = calculate_realized_net_profit(st.session_state.trades.copy())
+        viz_df = calculate_floating_pnl(st.session_state.trades.copy())   # ←←← 这里改成新函数
         viz_df["交易金额"] = viz_df.apply(calc_transaction_amount, axis=1)
         viz_df = viz_df.sort_values("交易日期").reset_index(drop=True)
         
-        # 全局总结
+        # 全局总结（已同步改成“总浮动盈亏”）
         total_trades = len(viz_df)
         total_net = viz_df["净利润"].sum()
-        st.markdown(f"**当前共有 {total_trades} 笔交易 | 总实现净利润：{total_net:,.2f} 元**")
+        st.markdown(f"**当前共有 {total_trades} 笔交易 | 总浮动盈亏：{total_net:,.2f} 元**")
         
-        # 全局饼图（各股票仓位占比）
+        # 全局饼图
         stock_position = viz_df.groupby("股票代码")["交易金额"].sum().abs()
         fig_global_pie = px.pie(
             names=stock_position.index,
@@ -530,7 +530,6 @@ with tab2:
             stock_net = stock_df["净利润"].sum()
             stock_trades = len(stock_df)
             
-            # 计算当前持仓
             current_shares = 0
             for _, row in stock_df.iterrows():
                 if row["交易类型"] == "仅买入":
@@ -539,17 +538,14 @@ with tab2:
                     current_shares = max(0, current_shares - row.get("股数", 0))
             
             with st.expander(f"📍 {stock} 交易总结（{stock_trades} 笔）", expanded=True):
-                # 指标行
                 col1, col2, col3 = st.columns(3)
-                col1.metric("该股票总净利润", f"{stock_net:,.2f} 元")
+                col1.metric("该股票总浮动盈亏", f"{stock_net:,.2f} 元")
                 col2.metric("交易笔数", stock_trades)
                 col3.metric("当前持仓", f"{current_shares} 股")
                 
-                # 🔥 左右分列：仓位饼图 + 净利润折线图
                 chart_col1, chart_col2 = st.columns(2)
                 
                 with chart_col1:
-                    # 该股票仓位饼图（累计买入金额 vs 累计卖出金额）
                     buy_amount = stock_df[stock_df["交易类型"] == "仅买入"]["交易金额"].sum()
                     sell_amount = abs(stock_df[stock_df["交易类型"] == "仅卖出"]["交易金额"].sum())
                     fig_pie = px.pie(
@@ -562,18 +558,17 @@ with tab2:
                     st.plotly_chart(fig_pie, use_container_width=True)
                 
                 with chart_col2:
-                    # 该股票累计净利润折线图
                     stock_df["累计净利润"] = stock_df["净利润"].cumsum()
                     fig_line = px.line(
                         stock_df,
                         x="交易日期",
                         y="累计净利润",
-                        title=f"{stock} 累计净利润走势",
+                        title=f"{stock} 累计盈亏走势",
                         markers=True,
                         line_shape="linear"
                     )
                     fig_line.update_layout(
-                        yaxis_title="累计净利润 (元)",
+                        yaxis_title="累计盈亏 (元)",
                         xaxis_title="交易日期",
                         height=400
                     )
@@ -615,7 +610,7 @@ with tab3:
         st.warning("还没有数据，请先去「新增交易」页面记录")
     else:
         # 🔥 关键修复：动态计算净利润（兼容删除数据后的情况）
-        stats_df = calculate_realized_net_profit(df.copy())
+        stats_df = calculate_floating_pnl(df.copy())
         
         total_net = stats_df["净利润"].sum()
         total_trades = len(stats_df)
