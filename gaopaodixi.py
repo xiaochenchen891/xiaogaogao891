@@ -349,16 +349,20 @@ with tab2:
         display_df = df.copy()
         display_df["交易金额"] = display_df.apply(calc_transaction_amount, axis=1)
         
-        # 计算仓位占比
+        # 🔥 关键修改：按股票 + 日期顺序计算累计交易金额
+        display_df = display_df.sort_values(["股票代码", "交易日期"]).reset_index(drop=True)
+        display_df["累计交易金额"] = display_df.groupby("股票代码")["交易金额"].cumsum()
+        
+        # 使用累计交易金额计算仓位占比（使用当时输入的总仓位）
         if "总仓位" in display_df.columns and st.session_state.total_funds > 0:
             display_df["仓位占比"] = display_df.apply(
-                lambda x: f"{(x['交易金额'] / x['总仓位'] * 100):.2f}%" if x['总仓位'] > 0 else "0.00%", 
+                lambda x: f"{(x['累计交易金额'] / x['总仓位'] * 100):.2f}%" if x['总仓位'] > 0 else "0.00%", 
                 axis=1
             )
         else:
             display_df["仓位占比"] = "0.00%"
         
-        # 🔥 只在这里去掉备注和毛利润列，主表格更干净
+        # 去掉备注和毛利润列
         display_df = display_df.drop(columns=["备注", "毛利润"], errors="ignore")
         
         edited_df = st.data_editor(
@@ -372,14 +376,15 @@ with tab2:
                 "卖出佣金": st.column_config.NumberColumn(format="%.2f", help="可手动修改"),
                 "印花税": st.column_config.NumberColumn(format="%.2f", help="自动万3，仅卖出时"),
                 "交易金额": st.column_config.NumberColumn(format="%.2f"),
-                "仓位占比": st.column_config.TextColumn(help="交易金额占总仓位的比例"),
+                "累计交易金额": st.column_config.NumberColumn(format="%.2f", help="截至当前笔的累计交易金额"),
+                "仓位占比": st.column_config.TextColumn(help="累计交易金额占总仓位的比例"),
                 "总仓位": st.column_config.NumberColumn(format="%.0f", help="当时输入的总仓位"),
             }
         )
         
         # 保存逻辑（自动重新计算印花税）
         if not edited_df.equals(display_df.sort_values("交易日期", ascending=False)):
-            st.session_state.trades = edited_df.drop(columns=["交易金额", "仓位占比"], errors="ignore").copy()
+            st.session_state.trades = edited_df.drop(columns=["交易金额", "累计交易金额", "仓位占比"], errors="ignore").copy()
             
             def auto_calc_tax(row):
                 if row["交易类型"] == "仅卖出" and pd.notna(row.get("卖出价格")) and pd.notna(row.get("股数")):
