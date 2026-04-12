@@ -128,11 +128,8 @@ def get_close_price(stock_code: str, trade_date):
     except:
         return None
 
-def calculate_realized_net_profit(df):
-    """每笔交易都计算净利润（按你的新要求）：
-    - 仅买入：使用【交易当天收盘价】计算浮动净利润
-    - 仅卖出：保持计算已实现净利润（平均成本法）
-    """
+def calculate_floating_pnl(df):
+    """每笔交易都计算浮动盈亏（买入用最新价，卖出用已实现利润）"""
     if df.empty:
         return df.copy()
     
@@ -140,6 +137,15 @@ def calculate_realized_net_profit(df):
     df = df.sort_values(['股票代码', '交易日期']).reset_index(drop=True)
     df['净利润'] = 0.0
     df['平均成本'] = 0.0
+    
+    # 先获取每只股票的最新收盘价（用于所有买入的浮动盈亏）
+    latest_price = {}
+    for stock in df['股票代码'].dropna().unique():
+        k_data, _ = get_kline_data(stock, days=30)  # 只取最近30天，速度快
+        if k_data is not None and not k_data.empty:
+            latest_price[stock] = float(k_data['close'].iloc[-1])
+        else:
+            latest_price[stock] = None
     
     for stock in df['股票代码'].dropna().unique():
         stock_mask = df['股票代码'] == stock
@@ -152,14 +158,13 @@ def calculate_realized_net_profit(df):
         for i, row in stock_df.iterrows():
             t_type = row['交易类型']
             qty = row.get('股数', 0)
-            trade_date = row['交易日期']
             
             if t_type == "仅买入":
                 buy_price = row.get('买入价格', 0)
                 buy_comm = row.get('买入佣金', 0)
                 
-                # 🔥 新逻辑：使用当天收盘价计算浮动净利润
-                close_price = get_close_price(row['股票代码'], trade_date)
+                # 🔥 浮动盈亏：使用最新收盘价
+                close_price = latest_price.get(row['股票代码'])
                 if close_price and pd.notna(buy_price) and qty > 0:
                     gross = (close_price - buy_price) * qty
                     net = gross - buy_comm
@@ -429,7 +434,7 @@ with tab2:
         display_df["交易金额"] = display_df.apply(calc_transaction_amount, axis=1)
         
         # 计算卖出净利润（平均成本法）
-        display_df = calculate_realized_net_profit(display_df)
+        display_df = calculate_floating_pnl(display_df)
         
         # 计算仓位累计总金额用于占比
         display_df = display_df.sort_values(["股票代码", "交易日期"]).reset_index(drop=True)
