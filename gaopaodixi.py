@@ -112,6 +112,62 @@ def calc_transaction_amount(row):
         return round((buy_p or 0) * qty - (sell_p or 0) * qty, 2)
     return 0.0
 
+def calculate_realized_net_profit(df):
+    """动态计算每笔卖出的净利润（加权平均成本法），买入净利润始终为0"""
+    if df.empty:
+        return df.copy()
+    
+    df = df.copy()
+    df = df.sort_values(['股票代码', '交易日期']).reset_index(drop=True)
+    df['净利润'] = 0.0
+    df['平均成本'] = 0.0  # 临时列
+    
+    for stock in df['股票代码'].dropna().unique():
+        stock_mask = df['股票代码'] == stock
+        stock_df = df[stock_mask].copy()
+        
+        total_shares = 0.0
+        total_cost = 0.0
+        avg_cost = 0.0
+        
+        for i, row in stock_df.iterrows():
+            t_type = row['交易类型']
+            qty = row.get('股数', 0)
+            
+            if t_type == "仅买入":
+                buy_price = row.get('买入价格', 0)
+                if pd.notna(buy_price) and qty > 0:
+                    total_cost += buy_price * qty
+                    total_shares += qty
+                    avg_cost = total_cost / total_shares if total_shares > 0 else 0
+                
+                df.at[i, '净利润'] = 0.0
+                df.at[i, '平均成本'] = round(avg_cost, 3)
+            
+            elif t_type == "仅卖出":
+                sell_price = row.get('卖出价格', 0)
+                sell_comm = row.get('卖出佣金', 0)
+                stamp = row.get('印花税', 0)
+                
+                if pd.notna(sell_price) and qty > 0 and total_shares > 0:
+                    # 结算净利润
+                    gross = (sell_price - avg_cost) * qty
+                    net = gross - row.get('买入佣金', 0) - sell_comm - stamp
+                    df.at[i, '净利润'] = round(net, 2)
+                else:
+                    df.at[i, '净利润'] = 0.0
+                
+                # 更新持仓（卖出后减少股数）
+                total_shares = max(0, total_shares - qty)
+                if total_shares > 0:
+                    # 剩余持仓仍按原平均成本
+                    pass
+                else:
+                    avg_cost = 0.0
+                df.at[i, '平均成本'] = round(avg_cost, 3)
+    
+    return df
+
 @st.cache_data(ttl=3600)
 def get_kline_data(stock_code: str, days: int = 90):
     stock_code = normalize_stock_code(stock_code)
@@ -349,11 +405,13 @@ with tab2:
         display_df = df.copy()
         display_df["交易金额"] = display_df.apply(calc_transaction_amount, axis=1)
         
-        # 🔥 后台计算仓位累计总金额（用于仓位占比），但不在表格里显示
-        display_df = display_df.sort_values(["股票代码", "交易日期"]).reset_index(drop=True)
-        display_df["累计交易金额"] = display_df.groupby("股票代码")["交易金额"].cumsum().abs()  # 绝对值用于占比
+        # 🔥 新增：动态计算卖出净利润（基于前面所有买入的平均成本）
+        display_df = calculate_realized_net_profit(display_df)
         
-        # 使用仓位累计总金额计算占比
+        # 计算仓位累计总金额（用于仓位占比）
+        display_df = display_df.sort_values(["股票代码", "交易日期"]).reset_index(drop=True)
+        display_df["累计交易金额"] = display_df.groupby("股票代码")["交易金额"].cumsum().abs()
+        
         if "总仓位" in display_df.columns and st.session_state.total_funds > 0:
             display_df["仓位占比"] = display_df.apply(
                 lambda x: f"{(x['累计交易金额'] / x['总仓位'] * 100):.2f}%" if x['总仓位'] > 0 else "0.00%", 
@@ -363,7 +421,7 @@ with tab2:
             display_df["仓位占比"] = "0.00%"
         
         # 去掉不需要的列
-        display_df = display_df.drop(columns=["备注", "毛利润", "累计交易金额"], errors="ignore")
+        display_df = display_df.drop(columns=["备注", "毛利润", "累计交易金额", "平均成本"], errors="ignore")
         
         edited_df = st.data_editor(
             display_df.sort_values("交易日期", ascending=False),
@@ -376,14 +434,15 @@ with tab2:
                 "卖出佣金": st.column_config.NumberColumn(format="%.2f", help="可手动修改"),
                 "印花税": st.column_config.NumberColumn(format="%.2f", help="自动万3，仅卖出时"),
                 "交易金额": st.column_config.NumberColumn(format="%.2f"),
+                "净利润": st.column_config.NumberColumn(format="%.2f", help="仅卖出时自动结算"),
                 "仓位占比": st.column_config.TextColumn(help="仓位累计总金额占总仓位的比例"),
                 "总仓位": st.column_config.NumberColumn(format="%.0f", help="当时输入的总仓位"),
             }
         )
         
-        # 保存逻辑（自动重新计算印花税）
+        # 保存逻辑（净利润在显示时动态计算，保存时清零）
         if not edited_df.equals(display_df.sort_values("交易日期", ascending=False)):
-            st.session_state.trades = edited_df.drop(columns=["交易金额", "仓位占比"], errors="ignore").copy()
+            st.session_state.trades = edited_df.drop(columns=["交易金额", "仓位占比", "净利润"], errors="ignore").copy()
             
             def auto_calc_tax(row):
                 if row["交易类型"] == "仅卖出" and pd.notna(row.get("卖出价格")) and pd.notna(row.get("股数")):
