@@ -569,7 +569,7 @@ with tab3:
             st.session_state.total_funds = new_total_funds
             save_config(st.session_state.get("tushare_token", ""), new_total_funds)
             save_trades_data()
-            st.success(f"✅ 资金配置已**永久保存**！")
+            st.success(f"✅ 资金配置已永久保存！")
     
     pos_df = get_current_positions(df)
     if not pos_df.empty:
@@ -586,27 +586,34 @@ with tab3:
     if len(df) == 0:
         st.warning("还没有数据，请先去「新增交易」页面记录")
     else:
-        complete_df = df[df["交易类型"] == "完整做T (买+卖)"] if "交易类型" in df.columns else df
-        total_net = complete_df["净利润"].sum()
-        total_trades = len(df)
-        win_trades = len(complete_df[complete_df["净利润"] > 0])
-        win_rate = (win_trades / len(complete_df) * 100) if len(complete_df) > 0 else 0
-        avg_profit = complete_df["净利润"].mean() if not complete_df.empty else 0
+        # 🔥 关键修复：动态计算净利润（兼容删除数据后的情况）
+        stats_df = calculate_realized_net_profit(df.copy())
+        
+        total_net = stats_df["净利润"].sum()
+        total_trades = len(stats_df)
+        win_trades = len(stats_df[stats_df["净利润"] > 0])
+        win_rate = (win_trades / total_trades * 100) if total_trades > 0 else 0
+        avg_profit = stats_df["净利润"].mean() if not stats_df.empty else 0
+        
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("总净利润", f"{total_net:,.2f} 元")
+        col1.metric("总实现净利润", f"{total_net:,.2f} 元")
         col2.metric("交易次数", total_trades)
         col3.metric("胜率", f"{win_rate:.1f}%")
         col4.metric("单笔平均收益", f"{avg_profit:,.2f} 元")
         
-        if not complete_df.empty:
-            df_sorted = complete_df.sort_values("交易日期")
-            df_sorted["累计收益"] = df_sorted["净利润"].cumsum()
-            fig = px.line(df_sorted, x="交易日期", y="累计收益", title="做T 累计收益曲线", markers=True)
+        if not stats_df.empty:
+            stats_df_sorted = stats_df.sort_values("交易日期")
+            stats_df_sorted["累计收益"] = stats_df_sorted["净利润"].cumsum()
+            fig = px.line(stats_df_sorted, x="交易日期", y="累计收益", 
+                         title="做T 累计收益曲线", markers=True)
             st.plotly_chart(fig, use_container_width=True)
             
-            win_loss = complete_df["净利润"].apply(lambda x: "盈利" if x > 0 else "亏损")
+            # 盈亏分布饼图
+            win_loss = stats_df["净利润"].apply(lambda x: "盈利" if x > 0 else "亏损" if x < 0 else "持平")
             if not win_loss.empty:
-                fig_pie = px.pie(values=win_loss.value_counts().values, names=win_loss.value_counts().index, title="盈亏分布")
+                fig_pie = px.pie(values=win_loss.value_counts().values, 
+                               names=win_loss.value_counts().index, 
+                               title="盈亏分布")
                 st.plotly_chart(fig_pie, use_container_width=True)
 
 with tab4:
