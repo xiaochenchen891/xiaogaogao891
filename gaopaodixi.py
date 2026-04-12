@@ -340,8 +340,12 @@ with tab2:
         
         if not edited_df.equals(display_df.sort_values("交易日期", ascending=False)):
             st.session_state.trades = edited_df.drop(columns=["交易金额"], errors="ignore")
+            
+            # 🔥 新增：清理空行和没有股票代码的脏数据
+            st.session_state.trades = st.session_state.trades.dropna(subset=["股票代码"]).reset_index(drop=True)
+            
             st.session_state.trades["交易金额"] = st.session_state.trades.apply(calc_transaction_amount, axis=1)
-            save_trades_data()  # 修改后立即自动保存
+            save_trades_data()
             st.rerun()
 
         col_dl, col_ul = st.columns(2)
