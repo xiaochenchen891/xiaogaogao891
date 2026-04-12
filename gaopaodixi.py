@@ -271,9 +271,9 @@ with tab1:
     with st.form("new_trade"):
         trade_type = st.selectbox(
             "交易类型", 
-            ["完整做T (买+卖)", "仅买入", "仅卖出"], 
+            ["仅买入", "仅卖出"], 
             index=0,
-            help="当天可能只有买或只有卖，现在支持单独记录"
+            help="支持单独记录买入或卖出交易"
         )
         
         col1, col2, col3 = st.columns(3)
@@ -284,9 +284,9 @@ with tab1:
         with col2:
             buy_price = None
             sell_price = None
-            if trade_type in ["完整做T (买+卖)", "仅买入"]:
+            if trade_type == "仅买入":
                 buy_price = st.number_input("买入价格 (元)", min_value=0.01, value=10.0, step=0.01)
-            if trade_type in ["完整做T (买+卖)", "仅卖出"]:
+            if trade_type == "仅卖出":
                 sell_price = st.number_input("卖出价格 (元)", min_value=0.01, value=10.5, step=0.01)
             qty = st.number_input("股数", min_value=100, value=100, step=100)
             comm_rate = st.number_input("佣金率 (默认万3)", min_value=0.0001, max_value=0.01, value=0.0003, step=0.0001, format="%.4f")
@@ -295,10 +295,8 @@ with tab1:
         notes = st.text_input("备注（可选）", placeholder="例如：早盘低开拉升")
         submitted = st.form_submit_button("✅ 提交本次做T记录")
         if submitted:
-            if trade_type == "完整做T (买+卖)":
-                gross, buy_comm, sell_comm, stamp, net = calc_profit(buy_price, sell_price, qty, comm_rate)
-            else:
-                gross = buy_comm = sell_comm = stamp = net = 0.0
+            # 不再支持“完整做T”，所有新记录净利润均为0
+            gross = buy_comm = sell_comm = stamp = net = 0.0
             new_row = pd.DataFrame([{
                 "交易日期": trade_date, 
                 "交易类型": trade_type,
@@ -314,7 +312,7 @@ with tab1:
             st.session_state.trades = pd.concat([st.session_state.trades, new_row], ignore_index=True)
             st.session_state.last_stock_code = stock_code
             save_trades_data()  # 自动保存到本地
-            st.success(f"✅ 记录已**自动保存至本地**！{'本次净利润 **' + f'{net:.2f} 元**' if trade_type == '完整做T (买+卖)' else '已记录（非完整做T不计入当日收益）'}")
+            st.success(f"✅ 记录已**自动保存至本地**！已记录（买入/卖出不计入当日收益）")
             st.rerun()
 
 with tab2:
