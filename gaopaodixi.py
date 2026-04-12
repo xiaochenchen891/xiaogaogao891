@@ -313,32 +313,35 @@ def plot_kline_with_trades(stock_code: str, trades_df: pd.DataFrame):
     
     st.plotly_chart(fig, use_container_width=True, key=f"kline_vol_{stock_code}")
 
-# 新增：当前仓位计算函数（最小插入，不影响原有逻辑）
 def get_current_positions(trades_df: pd.DataFrame):
     if trades_df.empty:
         return pd.DataFrame(columns=["股票代码", "持仓股数", "平均成本", "最新价", "持仓金额", "浮动盈亏", "仓位占比"])
     
+    # 使用和 Tab2 完全一致的浮动盈亏逻辑，保证总浮动盈亏完全对得上
+    pnl_df = calculate_floating_pnl(trades_df.copy())
+    
     positions = []
-    for stock in trades_df["股票代码"].unique():
-        stock_trades = trades_df[trades_df["股票代码"] == stock].sort_values("交易日期")
+    for stock in pnl_df["股票代码"].dropna().unique():
+        stock_trades = pnl_df[pnl_df["股票代码"] == stock]
         shares = 0
         total_cost = 0.0
+        
         for _, row in stock_trades.iterrows():
-            t_type = row.get("交易类型", "")
-            qty = row["股数"]
-            if t_type == "仅买入":
-                shares += qty
-                if pd.notna(row["买入价格"]):
-                    total_cost += row["买入价格"] * qty
-            elif t_type == "仅卖出":
-                shares = max(0, shares - qty)
+            if row["交易类型"] == "仅买入":
+                shares += row.get("股数", 0)
+                if pd.notna(row.get("买入价格")):
+                    total_cost += row["买入价格"] * row.get("股数", 0)
+            elif row["交易类型"] == "仅卖出":
+                shares = max(0, shares - row.get("股数", 0))
+        
         if shares > 0:
             avg_cost = round(total_cost / shares, 3)
             k_data, _ = get_kline_data(stock)
             latest_price = round(k_data['close'].iloc[-1], 3) if k_data is not None and not k_data.empty else avg_cost
             position_value = round(latest_price * shares, 2)
             unrealized = round((latest_price - avg_cost) * shares, 2)
-            ratio = round((position_value / st.session_state.total_funds) * 100, 1) if st.session_state.total_funds > 0 else 0
+            ratio = round((position_value / st.session_state.total_funds * 100), 1) if st.session_state.total_funds > 0 else 0
+            
             positions.append({
                 "股票代码": stock,
                 "持仓股数": int(shares),
@@ -348,6 +351,7 @@ def get_current_positions(trades_df: pd.DataFrame):
                 "浮动盈亏": unrealized,
                 "仓位占比": f"{ratio}%"
             })
+    
     return pd.DataFrame(positions)
 
 # ==================== Tabs ====================
