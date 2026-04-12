@@ -40,7 +40,10 @@ app_config = load_config()
 # 优先从 secrets.toml 读取（生产部署推荐）
 # 本地开发/测试也可以创建 .streamlit/secrets.toml 文件
 if "tushare_token" not in st.session_state:
-    st.session_state.tushare_token = st.secrets.get("tushare_token", "")
+    try:
+        st.session_state.tushare_token = st.secrets.get("tushare_token", "")
+    except:
+        st.session_state.tushare_token = ""
 
 # ==================== 初始化 session_state ====================
 if "total_funds" not in st.session_state:
