@@ -426,7 +426,7 @@ with tab4:
     elif not st.session_state.get("tushare_token", "").strip():
         st.warning("👈 请在左侧边栏输入并保存 Tushare Token")
     else:
-        unique_stocks = sorted(df["股票代码"].unique())
+        unique_stocks = sorted(df["股票代码"].dropna().unique())
         default_index = 0
         if st.session_state.last_stock_code and st.session_state.last_stock_code in unique_stocks:
             default_index = unique_stocks.index(st.session_state.last_stock_code)
